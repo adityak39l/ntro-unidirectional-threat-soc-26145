@@ -1,0 +1,26 @@
+# Python virtual environments & bytecode
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.log
+
+# Data Diode artifacts & temporary capture files
+data/pcaps/*.pcap
+data/pcaps/*.pcapng
+data/processed/*.csv
+data/models/*.pkl
+data/models/*.onnx
+data/*.db
+data/*.jsonl
+data/**/*.db
+data/**/*.jsonl
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

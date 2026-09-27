@@ -1,0 +1,44 @@
+# SIH 26145 - System Configuration
+# Unidirectional IP Traffic Cyber Threat Detection
+
+system:
+  mode: 'streaming'             # 'streaming' or 'offline_pcap'
+  read_only: true               # Strictly enforce unidirectional / no outbound packets
+  log_level: 'INFO'
+
+ingestion:
+  default_pcap: 'data/pcaps/simulated_traffic.pcap'
+  interface: 'eth0'             # Used in live capture mode
+  buffer_size: 65536
+  snaplen: 262144
+
+windowing:
+  window_size_seconds: 3.0      # Sliding window width
+  slide_interval_seconds: 1.0   # Sliding window step
+  flow_idle_timeout: 15.0       # Flow idle timeout in seconds
+  flow_active_timeout: 120.0    # Flow active timeout in seconds
+
+feature_engine:
+  entropy_threshold: 3.8        # DNS DGA / Exfil entropy threshold
+  iat_beacon_variance_max: 0.05 # Max IAT variance for beaconing flag
+  splt_max_packets: 30          # First N packets for SPLT sequence
+
+detection:
+  confidence_threshold: 0.70    # Minimum confidence to trigger alert
+  enabled_detectors:
+    - 'ddos'
+    - 'botnet_c2'
+    - 'dga_dns'
+    - 'dns_tunnel'
+    - 'encrypted_malware'
+    - 'port_scan'
+    - 'data_exfiltration'
+
+alerts:
+  storage_path: 'data/alerts.jsonl'
+  sqlite_db: 'data/alerts.db'
+  dedup_cooldown_seconds: 30
+
+dashboard:
+  host: '0.0.0.0'
+  port: 8501
