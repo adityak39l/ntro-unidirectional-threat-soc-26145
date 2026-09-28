@@ -27,4 +27,9 @@ class BeaconingDetector:
             "iat_cv": round(iat_cv, 4),
             "packet_count": int(pkt_count)
         }
+        if is_threat:
+            evidence["indicators"] = [
+                f"{int(pkt_count)} check-ins at a fixed {iat_mean:.2f} s interval",
+                f"interval variance {iat_var:.4f} (human-driven traffic is irregular)",
+            ]
         return is_threat, round(confidence, 4), evidence

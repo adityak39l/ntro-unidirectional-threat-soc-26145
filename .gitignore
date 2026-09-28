@@ -18,6 +18,7 @@ data/*.db
 data/*.jsonl
 data/**/*.db
 data/**/*.jsonl
+data/sessions/
 
 # System & IDE files
 .DS_Store

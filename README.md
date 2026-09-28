@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-Production--Ready-success.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-39%2F39%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-50%2F50%20Passed-brightgreen.svg)]()
 [![MITRE ATT&CK](https://img.shields.io/badge/Taxonomy-MITRE%20ATT%26CK%C2%AE-orange.svg)](https://attack.mitre.org/)
 [![Architecture](https://img.shields.io/badge/Compliance-Hardware%20Data%20Diode%20(Zero--Tx)-red.svg)]()
 
@@ -97,13 +97,17 @@ Automated malware beacons trigger deterministic pulses with variance tending tow
 ## 🖥️ Enterprise SOC Dashboard
 
 The dashboard provides a real-time Security Operations Center interface:
-* **📂 Analyse Your PCAP:** Upload any Wireshark / tcpdump capture (.pcap / .pcapng; Ethernet, Linux-cooked, raw-IP or loopback). It is replayed through the same passive pipeline and every tab updates with its detections.
-* **🚨 Threat Overview:** Dynamic DEFCON-style Threat Posture banner (GREEN/YELLOW/ORANGE/RED with glowing pulse), 6 KPI cards, Plotly threat distribution bar chart, severity donut chart, interactive attack timeline, and top 10 threat sources table.
-* **🗺️ Network Intelligence:** Interactive Network Attack Topology Graph (IP nodes, connection lines, risk colors, size based on alert frequency) and Source IP × Attack Heatmap.
-* **🔍 Alert Investigation:** Dynamic multi-criteria filters (Severity, Threat Class, IP search), clean alert feed, one-click CSV export, Explainable AI Forensic Inspector displaying cryptographic proofs, an **automated response playbook** (iptables + Snort 3/Suricata rules per alert, exported for the downstream enforcement point) and a printable **incident report** (HTML → PDF).
-* **🧪 Attack Simulation Lab:** Interactive launcher cards for all 6 threat vectors with MITRE ATT&CK technique IDs, severity tags, algorithmic descriptions, and real-world threat actor examples.
-* **📊 Analytics & Reports:** Lockheed Martin Cyber Kill Chain coverage pipeline with active detection highlights, MITRE ATT&CK® Enterprise Matrix, Threat Radar chart, and Data Diode compliance verification.
-* **🎨 Dual Display Theme:** High-contrast Dark Mode (Cyber SOC) and High-Contrast Light Mode (Enterprise) with WCAG AAA accessibility standards.
+* **Header:** status chips (passive / live monitoring, zero return path, current data source), a **🔔 notification centre** with unread count, an alarm **sound toggle** and a **Dark / Light mode dropdown** (the choice is kept in the URL, e.g. `?theme=Light+mode`, so a shared link opens in the same theme).
+* **🚨 Attack notifications:** every new detection raises a toast for its NTRO threat type (DDoS, C2 beaconing, DGA / DNS tunneling, encrypted malware, port scan, exfiltration) with the evidence in one line, e.g. *“SYN flood on 10.0.0.1: 500 pkt/s from 186 sources”*. Toasts are grouped per threat type so a large capture cannot flood the screen. **CRITICAL** attacks also play a short alarm (generated in code; mute button in the header). System problems — an unreadable or truncated capture, a failed simulation — are notified the same way.
+* **📡 Live monitoring:** a sidebar toggle streams a new batch of benign or attack traffic through the pipeline every ~12 s, so alerts and notifications arrive as they would on a real sensor.
+* **🔎 Global filters:** time window, severity, threat vector and IP search in one row; every KPI, chart and table follows the same slice.
+* **Overview:** threat-posture banner, KPI tiles, alerts per vector (all six shown, including zero), severity mix, alert timeline in **IST**, latest high-priority incidents and a vector × severity table (the table twin of the charts).
+* **📂 Analyse PCAP:** upload any Wireshark / tcpdump capture (.pcap / .pcapng; Ethernet, Linux-cooked, raw-IP or loopback) with a live progress bar; every tab then reflects that capture.
+* **Network:** directional topology (sources → targets, one-way arrows as through the data diode) and a source × vector heatmap.
+* **Investigation:** paginated alert feed; **Investigate** opens a dialog with the flow, *why it was flagged*, the evidence, MITRE mapping, a recommended action, iptables + Snort 3/Suricata rules (for the downstream enforcement point) and a per-alert report. Bulk export: CSV, `.sh`, `.rules`, incident report (HTML → PDF).
+* **Simulation lab & Reports:** one card per NTRO vector with its detection method; kill-chain coverage, a MITRE ATT&CK® matrix grouped by tactic with average confidence, and the data-diode compliance table.
+* **Private workspaces:** each browser session of the hosted demo has its own alert store, so judges using the live link at the same time never see or reset each other's data (idle workspaces are removed after 12 h).
+* **Accessibility:** severity is always encoded by shape as well as colour (■ critical, ▲ high, ◆ medium, ● low), charts use a single-hue scale for counts, and the layout adapts to phone width.
 
 ---
 
@@ -133,7 +137,7 @@ pip install -r requirements.txt
 ```
 
 ### 3. Run Automated Tests
-Verify all 39 unit and integration tests across features, ingestion, models, pipeline, response rules and reporting (includes an end-to-end check that each simulated attack is detected as its own class and benign traffic raises no alert):
+Verify all 50 unit and integration tests across features, ingestion, models, pipeline, response rules, reporting and the dashboard (includes an end-to-end check that each simulated attack is detected as its own class and benign traffic raises no alert):
 ```bash
 pytest tests/ -v
 ```
@@ -161,7 +165,12 @@ Open **`http://localhost:8501`** in your browser.
 ├── alerts/               # Alert schema, SQLite DB & JSONL logging
 │   └── alert_manager.py  # StandardAlert schema & deduplication logic
 ├── dashboard/            # Real-time Streamlit SOC interface
-│   └── app.py            # 5-tab dashboard with Plotly & dual themes
+│   ├── app.py            # 6-tab SOC dashboard (Streamlit + Plotly)
+│   ├── catalog.py        # Threat-vector & severity metadata (MITRE, icons)
+│   ├── notifications.py  # Alert messages, toast grouping, alarm tone
+│   ├── theme.py          # Dark / light design tokens, CSS, chart layout
+│   ├── components.py     # Escaped HTML building blocks, IST time
+│   └── workspace.py      # Per-session private alert stores
 ├── data/                 # Captured PCAPs and alert databases (git-ignored)
 ├── detection/            # Pipeline orchestration
 │   └── pipeline.py       # StreamingDetectionPipeline: flows + 3 s sliding windows
@@ -194,6 +203,7 @@ Open **`http://localhost:8501`** in your browser.
 │   ├── test_features.py  # Entropy, DNS, JA3, SPLT tests
 │   ├── test_ingestion.py # Flow aggregation & sliding window tests
 │   ├── test_models.py    # Detection tests for all 6 models
+│   ├── test_dashboard.py # Dashboard helpers + headless app smoke test
 │   ├── test_pipeline_and_alerts.py # Pipeline integration + end-to-end attack tests
 │   └── test_response_and_report.py # Rule generation & report escaping tests
 ├── traffic_simulator/    # Synthetic traffic generation
@@ -209,7 +219,7 @@ Open **`http://localhost:8501`** in your browser.
 
 | Metric | Measured Value | Standard Required |
 |---|---|---|
-| **Test Suite** | **39/39 Passed** | 100% Pass |
+| **Test Suite** | **50/50 Passed** | 100% Pass |
 | **Detection on simulated attacks** | **6/6 vectors, each as its own class; 0 alerts on benign mix** | No cross-class false positives |
 | **Inference latency** | **~0.08 ms per flow, ~0.8 ms per 3 s window** | Sub-second real-time |
 | **End-to-end throughput** | **~7,400 packets/sec** (single Python core; PCAP parsing alone ~67k pkt/s) | Continuous streaming |

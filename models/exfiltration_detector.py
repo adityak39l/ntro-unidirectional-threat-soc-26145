@@ -27,4 +27,10 @@ class ExfiltrationDetector:
             "payload_ratio": round(payload_ratio, 2),
             "avg_packet_size": round(pkt_len_mean, 2)
         }
+        if is_threat:
+            evidence["indicators"] = [
+                f"{tot_bytes / 1024:,.1f} KB pushed in one direction",
+                f"payload-to-header ratio {payload_ratio:.1f} (bulk data, not control traffic)",
+                f"average packet {pkt_len_mean:,.0f} B (MTU-sized frames)",
+            ]
         return is_threat, round(confidence, 4), evidence

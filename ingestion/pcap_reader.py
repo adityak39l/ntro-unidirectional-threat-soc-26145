@@ -39,6 +39,9 @@ class ReadOnlyPacketReader:
         self.packets_parsed = 0
         self.frames_skipped = 0
         self.truncated = False
+        # Byte offset reached in the capture, for progress reporting
+        self.file_size = os.path.getsize(filepath)
+        self.bytes_read = 0
 
     def read_packets(self) -> Generator[Dict[str, Any], None, None]:
         if not DPKT_AVAILABLE:
@@ -61,6 +64,7 @@ class ReadOnlyPacketReader:
                     self.truncated = True
                     break
                 self.frames_read += 1
+                self.bytes_read = f.tell()
                 pkt = self._parse_packet(ts, buf)
                 if pkt:
                     self.packets_parsed += 1

@@ -29,6 +29,13 @@ class PortScanDetector:
 
         is_threat = confidence >= 0.70
         probed = source.get("probed_ports", [])
+        indicators = []
+        if is_threat:
+            if ports >= hosts:
+                indicators.append(f"{ports} distinct ports probed on one host within a 3 s window")
+            else:
+                indicators.append(f"{hosts} hosts probed on the same port within a 3 s window")
+            indicators.append(f"{probe_ratio:.0%} of packets are connection probes (SYN without ACK)")
         evidence = {
             "scan_type": scan_type,
             "distinct_ports_on_one_host": ports,
@@ -37,4 +44,6 @@ class PortScanDetector:
             "target": source.get("vertical_target", ""),
             "sample_ports": probed[:20],
         }
+        if indicators:
+            evidence["indicators"] = indicators
         return is_threat, round(confidence, 4), evidence
