@@ -1,5 +1,14 @@
 from typing import Dict, Tuple, List, Optional, Any
 
+# A TLS ClientHello fits in one record; cap what we keep per flow
+MAX_CLIENT_HELLO_BYTES = 16384
+
+
+def looks_like_client_hello(payload: bytes) -> bool:
+    # TLS record type 0x16 (handshake), major version 3, handshake type 1 (ClientHello)
+    return len(payload) > 5 and payload[0] == 0x16 and payload[1] == 0x03 and payload[5] == 0x01
+
+
 class NetworkFlow:
     def __init__(self, key: Tuple, first_packet: Dict[str, Any]):
         self.key = key
@@ -19,6 +28,7 @@ class NetworkFlow:
         self.rst_count = 0
         self.psh_count = 0
         self.payload_samples: List[bytes] = []
+        self.tls_client_hello: bytes = b""
 
         self.add_packet(first_packet)
 
@@ -41,8 +51,12 @@ class NetworkFlow:
         if flags.get("RST"): self.rst_count += 1
         if flags.get("PSH"): self.psh_count += 1
 
-        if len(self.payload_samples) < 5 and pkt.get("raw_payload"):
-            self.payload_samples.append(pkt["raw_payload"][:512])
+        raw = pkt.get("raw_payload")
+        if raw:
+            if len(self.payload_samples) < 5:
+                self.payload_samples.append(raw[:512])
+            if not self.tls_client_hello and looks_like_client_hello(raw):
+                self.tls_client_hello = raw[:MAX_CLIENT_HELLO_BYTES]
 
     @property
     def duration(self) -> float:
@@ -69,7 +83,8 @@ class NetworkFlow:
             "fin_count": self.fin_count,
             "rst_count": self.rst_count,
             "psh_count": self.psh_count,
-            "payload_samples": self.payload_samples
+            "payload_samples": self.payload_samples,
+            "tls_client_hello": self.tls_client_hello
         }
 
 class FlowAggregator:

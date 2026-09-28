@@ -61,3 +61,43 @@ def test_feature_extractor_pipeline():
     assert features["iat_variance"] == 0.0
     assert "splt_0" in features
     assert features["splt_0"] == 100.0
+
+
+def test_ja3_from_clienthello_filters_grease():
+    from feature_engine.tls_fingerprint import build_client_hello
+    hello = build_client_hello(
+        [0x0A0A, 0x1301, 0xC02F], extensions={23: b"", 0x2A2A: b""}, sni="example.org",
+        groups=[0x1A1A, 29, 23], point_formats=[0],
+    )
+    info = TLSFingerprinter.extract_ja3(hello)
+    assert info["is_tls"] and info["complete"]
+    assert info["sni"] == "example.org"
+    # version, ciphers, extensions (SNI, groups, point formats, 23), curves, point formats; GREASE removed
+    assert info["ja3_str"] == "771,4865-49199,0-10-11-23,29-23,0"
+    import hashlib
+    assert info["ja3_hash"] == hashlib.md5(info["ja3_str"].encode()).hexdigest()
+
+
+def test_truncated_clienthello_is_tls_but_incomplete():
+    from feature_engine.tls_fingerprint import build_client_hello
+    hello = build_client_hello([0x1301, 0x1302], extensions={23: b""}, sni="example.org")
+    info = TLSFingerprinter.extract_ja3(hello[:-10])
+    assert info["is_tls"] is True
+    assert info["complete"] is False
+    assert info["ja3_hash"] == ""
+
+
+def test_dga_scoring_separates_benign_and_generated_domains():
+    benign = ["google.com", "microsoft.com", "stackoverflow.com", "cloudflare.com", "ntro.gov.in",
+              "googleusercontent.com", "strengths.com", "d1a2b3c4e5f6.cloudfront.net"]
+    generated = ["vxzq123pkm.biz", "qweasd1234rty.info", "mnbv123lkjh.org", "kp9w12zjlm4h.club"]
+    for d in benign:
+        assert len(DNSAnalyzer.analyze_domain(d)["dga_signals"]) < 3, d
+    for d in generated:
+        assert len(DNSAnalyzer.analyze_domain(d)["dga_signals"]) >= 3, d
+
+
+def test_dns_tunnel_subdomain_detected():
+    res = DNSAnalyzer.analyze_domain("mzxw6ytboi2dsnrzgq3tmnzygu4tsmjrgiztinjwg4.t.exfil-c2.net")
+    assert res["is_tunnel_suspect"] is True
+    assert DNSAnalyzer.analyze_domain("www.wikipedia.org")["is_tunnel_suspect"] is False

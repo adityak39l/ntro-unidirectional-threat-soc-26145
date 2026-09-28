@@ -1,7 +1,9 @@
-﻿[server]
+[server]
 headless = true
 enableCORS = false
 enableXsrfProtection = false
+# PCAP uploads are parsed in memory on a small cloud instance
+maxUploadSize = 50
 
 [theme]
 base = 'dark'

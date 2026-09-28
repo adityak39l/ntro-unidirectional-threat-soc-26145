@@ -1,12 +1,32 @@
 import os
 import random
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from feature_engine.tls_fingerprint import build_client_hello
 
 try:
     from scapy.all import wrpcap, Ether, IP, TCP, UDP, DNS, DNSQR, Raw
     SCAPY_AVAILABLE = True
 except ImportError:
     SCAPY_AVAILABLE = False
+
+# Browser-like ClientHello: TLS 1.2 handshake version, GREASE, SNI, modern AEAD suites
+BENIGN_CIPHERS = [0x0A0A, 0x1301, 0x1302, 0x1303, 0xC02B, 0xC02F, 0xC02C, 0xC030,
+                  0xCCA9, 0xCCA8, 0xC013, 0xC014, 0x009C, 0x009D, 0x002F, 0x0035]
+BENIGN_EXTENSIONS = {23: b"", 65281: b"\x00", 35: b"", 16: b"\x00\x0c\x02h2\x08http/1.1",
+                     13: b"\x00\x08\x04\x03\x08\x04\x04\x01\x05\x03", 43: b"\x06\x03\x04\x03\x03\x03\x02"}
+
+
+def benign_client_hello(sni: str) -> bytes:
+    return build_client_hello(BENIGN_CIPHERS, extensions=BENIGN_EXTENSIONS, sni=sni,
+                              groups=[0x1A1A, 29, 23, 24], point_formats=[0])
+
+
+def implant_client_hello() -> bytes:
+    # Legacy TLS 1.0 handshake, two suites, no SNI, one extension: typical of hand-rolled C2 stagers
+    return build_client_hello([0xC02F, 0xC030], extensions={65281: b"\x00"}, client_version=0x0301)
 
 
 def generate_synthetic_pcap(attack_type: str = "all", output_path: str = "data/pcaps/simulated_traffic.pcap"):
@@ -29,12 +49,28 @@ def generate_synthetic_pcap(attack_type: str = "all", output_path: str = "data/p
             dns_pkt.time = t
             packets.append(dns_pkt)
 
-    # 2. Volumetric DDoS (SYN Flood) — T1498
+        # Normal HTTPS sessions: ClientHello with SNI then irregular (human-driven) data packets
+        benign_sites = ["www.google.com", "github.com", "www.wikipedia.org", "ntro.gov.in", "www.cloudflare.com"]
+        for k, site in enumerate(benign_sites):
+            sport = random.randint(40000, 60000)
+            dst = f"142.250.{k}.{random.randint(1, 254)}"
+            t = base_time + 0.05 + k * 0.3
+            hello = Ether()/IP(src=f"192.168.1.{rand_id}", dst=dst)/TCP(sport=sport, dport=443, flags="PA")/Raw(load=benign_client_hello(site))
+            hello.time = t
+            packets.append(hello)
+            for _ in range(10):
+                t += random.expovariate(1 / 0.4)
+                data = Ether()/IP(src=f"192.168.1.{rand_id}", dst=dst)/TCP(sport=sport, dport=443, flags="PA")/Raw(load=b"\x17\x03\x03" + os.urandom(random.randint(40, 900)))
+                data.time = t
+                packets.append(data)
+
+    # 2. Volumetric DDoS (SYN Flood) — T1498: ~500 pps of half-open SYNs from ~200 spoofed bots
     if attack_type in ["all", "ddos"]:
         ddos_start = base_time + 1.0
-        for i in range(250):
-            t = ddos_start + (i * 0.003)
-            src_ip = f"172.16.{random.randint(1, 10)}.{random.randint(1, 254)}"
+        bots = [f"172.16.{random.randint(1, 10)}.{random.randint(1, 254)}" for _ in range(200)]
+        for i in range(600):
+            t = ddos_start + (i * 0.002)
+            src_ip = random.choice(bots)
             syn_pkt = Ether()/IP(src=src_ip, dst="10.0.0.1")/TCP(sport=random.randint(1024, 65535), dport=80, flags="S")
             syn_pkt.time = t
             packets.append(syn_pkt)
@@ -66,6 +102,15 @@ def generate_synthetic_pcap(attack_type: str = "all", output_path: str = "data/p
             pkt.time = t
             packets.append(pkt)
 
+        # DNS tunneling: stolen data base32-encoded into long subdomain labels
+        tunnel_host = f"192.168.2.{rand_id + 1}"
+        for i in range(3):
+            chunk = "".join(random.choice("abcdefghijklmnopqrstuvwxyz234567") for _ in range(48))
+            t = dga_start + 1.5 + (i * 0.3)
+            pkt = Ether()/IP(src=tunnel_host, dst="8.8.4.4")/UDP(sport=random.randint(40000, 60000), dport=53)/DNS(rd=1, qd=DNSQR(qname=f"{chunk}.{i}.t.exfil-c2.net"))
+            pkt.time = t
+            packets.append(pkt)
+
     # 5. Port Scanning (Reconnaissance) — T1046
     if attack_type in ["all", "port_scan"]:
         scan_start = base_time + 4.0
@@ -82,9 +127,8 @@ def generate_synthetic_pcap(attack_type: str = "all", output_path: str = "data/p
         suspicious_ports = [4444, 8443, 9443, 1443, 6667]
         mal_sport = random.randint(40000, 60000)
         mal_dport = random.choice(suspicious_ports)
-        tls_header = b"\x16\x03\x01\x00\xc8\x01\x00\x00\xc4\x03\x01" + os.urandom(32) + b"\x00\x00\x04\xc0\x2f\xc0\x30\x01\x00"
-        payload = tls_header + os.urandom(100)
         for i in range(15):
+            payload = implant_client_hello() if i == 0 else b"\x17\x03\x01" + os.urandom(100)
             t = mal_start + (i * 0.4)
             mal_pkt = Ether()/IP(src=f"192.168.1.{rand_id}", dst=f"203.0.113.{rand_id}")/TCP(sport=mal_sport, dport=mal_dport, flags="PA")/Raw(load=payload)
             mal_pkt.time = t

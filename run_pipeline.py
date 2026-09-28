@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import time
 from ingestion.pcap_reader import ReadOnlyPacketReader
@@ -48,10 +48,12 @@ def main():
     print("=" * 60)
     print(f"Total Packets Ingested:    {packet_count}")
     print(f"Total Flows Tracked:       {stats['total_flows']}")
+    print(f"Sliding Windows Evaluated: {stats['total_windows']}")
     print(f"Total Threat Alerts Fired: {stats['total_alerts']}")
     print(f"Elapsed Processing Time:   {elapsed:.3f} seconds")
     print(f"Throughput (Packets/sec):  {packet_count / elapsed:.2f} pkts/sec")
     print(f"Throughput (Flows/sec):    {stats['total_flows'] / elapsed:.2f} flows/sec")
+    print(f"Avg Inference Latency:     {stats['avg_flow_inference_ms']} ms/flow, {stats['avg_window_inference_ms']} ms/window")
     print("Alerts written to:         data/alerts.jsonl & data/alerts.db")
     print("=" * 60)
 

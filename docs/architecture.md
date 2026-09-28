@@ -40,7 +40,7 @@ The detection system operates under strict physical and protocol constraints:
 │                                   │                                         │
 │                                   ▼                                         │
 │  [ Layer 3: AI/ML Threat Detection Engine ]                                 │
-│  ├─ Volumetric & Protocol DDoS Classifier (XGBoost / Random Forest)         │
+│  ├─ Volumetric & Protocol DDoS Detector (per-target sliding-window fan-in)  │
 │  ├─ Botnet C2 Beaconing Detector (Periodicity & IAT Variance Profiler)      │
 │  ├─ DGA & DNS Tunneling Detector (Shannon Entropy + Token Length Heuristic) │
 │  ├─ Encrypted Malware Detector (JA3 Signature Match + SPLT Anomaly)         │
@@ -61,7 +61,7 @@ The detection system operates under strict physical and protocol constraints:
 
 ### A. Volumetric / Protocol DDoS
 - **Signals:** Abrupt surge in Packets-per-Second (PPS > 500), high SYN-to-ACK ratio (> 5.0), source IP entropy dispersal.
-- **Model:** Random Forest / Gradient Boosted Trees trained on flow dynamics.
+- **Model:** Evaluated per target IP in every 3 s sliding window (1 s slide): peak PPS over 1 s buckets, share of half-open SYNs (or UDP), and number/entropy of distinct sources. One alert per flooded target instead of one per spoofed packet.
 
 ### B. Botnet C2 Beaconing
 - **Signals:** Mathematical periodicity in Inter-Arrival Times (IAT). Legitimate human browsing shows high variance (Poisson arrival); C2 malware shows tight clustering with near-zero variance ($\sigma^2 < 0.01$) and low coefficient of variation ($CV < 0.15$).

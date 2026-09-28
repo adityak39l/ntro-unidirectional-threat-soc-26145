@@ -1,12 +1,20 @@
 import math
 import re
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 try:
     import dpkt
     DPKT_AVAILABLE = True
 except ImportError:
     DPKT_AVAILABLE = False
+
+# Two-label public suffixes, so "ntro.gov.in" scores "ntro" rather than "gov"
+TWO_LEVEL_SUFFIXES = {
+    "co.in", "gov.in", "nic.in", "ac.in", "org.in", "net.in", "res.in", "mil.in",
+    "co.uk", "ac.uk", "gov.uk", "org.uk", "com.au", "net.au", "co.jp", "com.cn", "com.br",
+}
+NON_SCORED_SUFFIXES = ("in-addr.arpa", "ip6.arpa", ".local")
+CONSONANTS = set("bcdfghjklmnpqrstvwxyz")
 
 
 def calculate_entropy(text: str) -> float:
@@ -23,6 +31,22 @@ def calculate_entropy(text: str) -> float:
     return float(entropy)
 
 
+def split_domain(domain: str) -> Dict[str, str]:
+    labels = [l for l in domain.lower().strip(".").split(".") if l]
+    if len(labels) >= 3 and ".".join(labels[-2:]) in TWO_LEVEL_SUFFIXES:
+        suffix_len = 2
+    else:
+        suffix_len = 1 if len(labels) >= 2 else 0
+    registered_idx = len(labels) - suffix_len - 1
+    if registered_idx < 0:
+        return {"registered_label": "", "subdomain": "", "suffix": ".".join(labels)}
+    return {
+        "registered_label": labels[registered_idx],
+        "subdomain": ".".join(labels[:registered_idx]),
+        "suffix": ".".join(labels[registered_idx + 1:]),
+    }
+
+
 class DNSAnalyzer:
     VOWELS = set("aeiouAEIOU")
 
@@ -35,7 +59,13 @@ class DNSAnalyzer:
                 "consonant_ratio": 0.0,
                 "digit_ratio": 0.0,
                 "subdomain_count": 0,
-                "has_consecutive_consonants": False
+                "has_consecutive_consonants": False,
+                "label": "",
+                "label_entropy": 0.0,
+                "subdomain_length": 0,
+                "subdomain_entropy": 0.0,
+                "dga_signals": [],
+                "is_tunnel_suspect": False,
             }
 
         length = len(domain)
@@ -52,13 +82,53 @@ class DNSAnalyzer:
 
         consecutive_consonants = bool(re.search(r"[bcdfghjklmnpqrstvwxyzBCDFGHJKLMNPQRSTVWXYZ]{5,}", domain))
 
+        parts = split_domain(domain)
+        label = parts["registered_label"]
+        label_entropy = calculate_entropy(label)
+        scored = not domain.lower().rstrip(".").endswith(NON_SCORED_SUFFIXES)
+
+        # DGA indicators computed on the registered label (the part malware randomises)
+        dga_signals: List[str] = []
+        if scored and label:
+            letters = [c for c in label if c.isalpha()]
+            label_consonant_ratio = (sum(1 for c in letters if c in CONSONANTS) / len(letters)) if letters else 0.0
+            label_digit_ratio = sum(1 for c in label if c.isdigit()) / len(label)
+            longest_consonant_run = max((len(m) for m in re.findall(r"[bcdfghjklmnpqrstvwxyz]+", label)), default=0)
+            high_entropy = label_entropy >= 3.0
+            if high_entropy:
+                dga_signals.append(f"high label entropy ({label_entropy:.2f} bits)")
+            if len(label) >= 8:
+                dga_signals.append(f"long random label ({len(label)} chars)")
+            if label_consonant_ratio >= 0.75:
+                dga_signals.append(f"consonant ratio {label_consonant_ratio:.2f}")
+            if letters and 0.1 <= label_digit_ratio <= 0.7:
+                dga_signals.append(f"letters mixed with digits ({label_digit_ratio:.0%})")
+            if longest_consonant_run >= 5:
+                dga_signals.append(f"{longest_consonant_run} consecutive consonants")
+            # Entropy is mandatory: pronounceable-but-rare words must not trip the detector
+            if not high_entropy:
+                dga_signals = []
+
+        subdomain = parts["subdomain"]
+        subdomain_entropy = calculate_entropy(subdomain)
+        is_tunnel_suspect = scored and (
+            (len(subdomain) >= 30 and subdomain_entropy >= 3.8)
+            or (calculate_entropy(domain) > 3.8 and length > 40)
+        )
+
         return {
             "query_length": length,
             "entropy": calculate_entropy(domain),
             "consonant_ratio": round(consonant_ratio, 4),
             "digit_ratio": round(digit_ratio, 4),
             "subdomain_count": subdomains,
-            "has_consecutive_consonants": consecutive_consonants
+            "has_consecutive_consonants": consecutive_consonants,
+            "label": label,
+            "label_entropy": round(label_entropy, 4),
+            "subdomain_length": len(subdomain),
+            "subdomain_entropy": round(subdomain_entropy, 4),
+            "dga_signals": dga_signals,
+            "is_tunnel_suspect": bool(is_tunnel_suspect),
         }
 
     @staticmethod
@@ -75,10 +145,8 @@ class DNSAnalyzer:
                 query_type = str(q.type)
 
             domain_features = DNSAnalyzer.analyze_domain(query_name)
+            domain_features["query_name"] = query_name
             domain_features["dns_record_type"] = query_type
-            domain_features["is_tunnel_suspect"] = (
-                domain_features["entropy"] > 3.8 and domain_features["query_length"] > 40
-            )
             return domain_features
         except Exception:
             return None

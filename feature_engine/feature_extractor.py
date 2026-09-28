@@ -1,9 +1,9 @@
-import math
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any, Optional, Tuple
 from .dns_analyzer import DNSAnalyzer
 from .tls_fingerprint import TLSFingerprinter
 
+DNS_PORTS = {53, 5353}
 
 class FeatureExtractor:
     def __init__(self, splt_length: int = 30):
@@ -50,30 +50,18 @@ class FeatureExtractor:
         header_bytes = max(0, tot_bytes - payload_bytes)
         payload_to_header_ratio = payload_bytes / (header_bytes + 1)
 
-        # DNS Inspection
-        dns_entropy = 0.0
-        dns_query_len = 0.0
-        is_dns_suspect = 0.0
-        samples = flow.get("payload_samples", [])
-        for payload in samples:
-            dns_info = DNSAnalyzer.parse_dns_payload(payload)
-            if dns_info:
-                dns_entropy = max(dns_entropy, dns_info.get("entropy", 0.0))
-                dns_query_len = max(dns_query_len, dns_info.get("query_length", 0))
-                if dns_info.get("is_tunnel_suspect"):
-                    is_dns_suspect = 1.0
+        dns_info, tls_info = self._inspect_payloads(flow)
+        dns_entropy = dns_info.get("label_entropy", 0.0) if dns_info else 0.0
+        dns_query_len = float(dns_info.get("query_length", 0)) if dns_info else 0.0
+        is_dns_suspect = 1.0 if dns_info and dns_info.get("is_tunnel_suspect") else 0.0
+        dns_dga_signals = float(len(dns_info.get("dga_signals", []))) if dns_info else 0.0
 
-        # TLS Inspection
-        is_tls = 0.0
-        cipher_count = 0.0
-        tls_version = 0.0
-        for payload in samples:
-            tls_info = TLSFingerprinter.extract_ja3(payload)
-            if tls_info.get("is_tls"):
-                is_tls = 1.0
-                cipher_count = float(tls_info.get("cipher_count", 0))
-                tls_version = float(tls_info.get("tls_version", 0))
-                break
+        is_tls = 1.0 if tls_info.get("is_tls") else 0.0
+        cipher_count = float(tls_info.get("cipher_count", 0))
+        tls_version = float(tls_info.get("tls_version", 0))
+        tls_extension_count = float(tls_info.get("extension_count", 0))
+        tls_has_sni = 1.0 if tls_info.get("sni") else 0.0
+        tls_complete = 1.0 if tls_info.get("complete") else 0.0
 
         features = {
             "packet_count": float(pkt_count),
@@ -96,9 +84,14 @@ class FeatureExtractor:
             "dns_entropy": float(dns_entropy),
             "dns_query_len": float(dns_query_len),
             "is_dns_suspect": float(is_dns_suspect),
+            "dns_dga_signals": float(dns_dga_signals),
             "is_tls": float(is_tls),
             "cipher_count": float(cipher_count),
-            "tls_version": float(tls_version)
+            "tls_version": float(tls_version),
+            "tls_extension_count": float(tls_extension_count),
+            "tls_has_sni": float(tls_has_sni),
+            "tls_complete": float(tls_complete),
+            "dst_port": float(flow.get("dst_port", 0) or 0)
         }
 
         # SPLT sequence
@@ -107,3 +100,46 @@ class FeatureExtractor:
             features[f"splt_{i}"] = float(val)
 
         return features
+
+    def extract_context(self, flow: Dict[str, Any]) -> Dict[str, Any]:
+        """Non-numeric evidence (JA3, SNI, queried domain) attached to the flow for XAI."""
+        dns_info, tls_info = self._inspect_payloads(flow)
+        context: Dict[str, Any] = {}
+        if tls_info.get("is_tls"):
+            context.update({
+                "ja3_hash": tls_info.get("ja3_hash", ""),
+                "ja3_str": tls_info.get("ja3_str", ""),
+                "sni": tls_info.get("sni", ""),
+                "tls_version_name": tls_info.get("tls_version_name", ""),
+            })
+        if dns_info:
+            context.update({
+                "dns_query": dns_info.get("query_name", ""),
+                "dns_label_entropy": dns_info.get("label_entropy", 0.0),
+                "dns_subdomain_length": dns_info.get("subdomain_length", 0),
+                "dns_subdomain_entropy": dns_info.get("subdomain_entropy", 0.0),
+                "dns_dga_signals": dns_info.get("dga_signals", []),
+            })
+        return context
+
+    @staticmethod
+    def _inspect_payloads(flow: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+        # DNS: keep the most suspicious query seen in the flow's payload samples
+        dns_info = None
+        if DNS_PORTS & {flow.get("src_port"), flow.get("dst_port")}:
+            for payload in flow.get("payload_samples", []):
+                info = DNSAnalyzer.parse_dns_payload(payload)
+                if not info:
+                    continue
+                rank = (info["is_tunnel_suspect"], len(info["dga_signals"]), info["label_entropy"])
+                if dns_info is None or rank > (dns_info["is_tunnel_suspect"], len(dns_info["dga_signals"]), dns_info["label_entropy"]):
+                    dns_info = info
+
+        tls_info: Dict[str, Any] = {}
+        hello = flow.get("tls_client_hello") or b""
+        candidates = [hello] if hello else flow.get("payload_samples", [])
+        for payload in candidates:
+            tls_info = TLSFingerprinter.extract_ja3(payload)
+            if tls_info.get("is_tls"):
+                break
+        return dns_info, tls_info

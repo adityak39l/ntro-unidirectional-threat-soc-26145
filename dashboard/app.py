@@ -2,7 +2,10 @@ import os
 import sys
 import json
 import math
+import time
 import sqlite3
+import tempfile
+from html import escape
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -18,6 +21,8 @@ if str(ROOT_DIR) not in sys.path:
 from traffic_simulator.generate_traffic import generate_synthetic_pcap
 from ingestion.pcap_reader import ReadOnlyPacketReader
 from detection.pipeline import StreamingDetectionPipeline
+from response.rule_generator import generate_response_rules, build_rules_bundle
+from reporting.incident_report import build_incident_report
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -586,19 +591,58 @@ def load_alert_data():
         return pd.DataFrame()
 
 
+MAX_UPLOAD_PACKETS = 300_000
+
+
+def analyse_pcap(pcap_path: str, idle_timeout: float = 15.0, max_packets=None) -> dict:
+    """Runs the passive pipeline over a capture and returns ingestion + detection telemetry."""
+    pipe = StreamingDetectionPipeline(alert_jsonl=JSONL_PATH, alert_db=DB_PATH, idle_timeout=idle_timeout)
+    reader = ReadOnlyPacketReader(pcap_path, max_packets=max_packets)
+    alerts = []
+    t0 = time.perf_counter()
+    for pkt in reader.read_packets():
+        alerts.extend(pipe.process_packet(pkt))
+    alerts.extend(pipe.flush_and_complete())
+    elapsed = max(1e-6, time.perf_counter() - t0)
+    stats = pipe.get_stats()
+    return {
+        "packets": reader.packets_parsed,
+        "skipped": reader.frames_skipped,
+        "truncated": reader.truncated,
+        "linktype": reader.linktype,
+        "flows": stats["total_flows"],
+        "windows": stats["total_windows"],
+        "alerts": alerts,
+        "elapsed": elapsed,
+        "pps": reader.packets_parsed / elapsed,
+        "flow_ms": stats["avg_flow_inference_ms"],
+        "window_ms": stats["avg_window_inference_ms"],
+    }
+
+
 def run_simulation(attack_name: str):
     pcap_path = str(ROOT_DIR / "data" / "pcaps" / "simulated_traffic.pcap")
     pkt_count = generate_synthetic_pcap(attack_type=attack_name, output_path=pcap_path)
-    pipe = StreamingDetectionPipeline(alert_jsonl=JSONL_PATH, alert_db=DB_PATH, idle_timeout=2.0)
-    pipe.alert_manager.cooldown_sec = 1.0
-    reader = ReadOnlyPacketReader(pcap_path)
-    new_alerts = 0
-    for pkt in reader.read_packets():
-        alerts = pipe.process_packet(pkt)
-        new_alerts += len(alerts)
-    final_alerts = pipe.flush_and_complete()
-    new_alerts += len(final_alerts)
-    return pkt_count, new_alerts
+    result = analyse_pcap(pcap_path, idle_timeout=2.0)
+    return pkt_count, len(result["alerts"])
+
+
+def alert_record(row) -> dict:
+    """DB row -> alert dict with parsed evidence (for rules and reports)."""
+    rec = {k: (v.item() if hasattr(v, "item") else v) for k, v in dict(row).items()}
+    try:
+        rec["evidence"] = json.loads(rec["evidence"]) if isinstance(rec.get("evidence"), str) else (rec.get("evidence") or {})
+    except ValueError:
+        rec["evidence"] = {}
+    return rec
+
+
+def format_evidence_value(v) -> str:
+    if isinstance(v, (list, tuple)):
+        return ", ".join(str(x) for x in v) if v else "—"
+    if isinstance(v, float):
+        return f"{v:.4f}"
+    return str(v)
 
 
 def reset_database():
@@ -640,9 +684,11 @@ st.markdown("""
 
 st.markdown('<div style="text-align:center"><span class="status-pill">● DATA DIODE ENCLAVE &nbsp;—&nbsp; PASSIVE MONITORING &nbsp;|&nbsp; 100% READ-ONLY &nbsp;|&nbsp; ZERO RETURN PATH</span></div>', unsafe_allow_html=True)
 
-# Load data and compute threat posture (auto-seed baseline threats on first launch)
+# Load data and compute threat posture (auto-seed baseline threats once per session, so
+# "Reset" and an uploaded capture with no findings are not refilled with simulated attacks)
 df = load_alert_data()
-if df.empty:
+if df.empty and not st.session_state.get("auto_seeded"):
+    st.session_state["auto_seeded"] = True
     try:
         run_simulation("all")
         df = load_alert_data()
@@ -654,7 +700,7 @@ critical_count = len(df[df["severity"] == "CRITICAL"]) if not df.empty else 0
 high_count = len(df[df["severity"] == "HIGH"]) if not df.empty else 0
 unique_sources = df["src_ip"].nunique() if not df.empty else 0
 unique_threats = df["threat_class"].nunique() if not df.empty else 0
-detection_rate = round((total_alerts / max(1, total_alerts + 20)) * 100, 1)
+avg_confidence = round(df["confidence_score"].mean() * 100, 1) if not df.empty else 0.0
 
 st.markdown(f'<div class="threat-banner {_tl_css}">THREAT POSTURE: {_tl_label} &nbsp;&nbsp; {_tl_color} &nbsp;&nbsp; | &nbsp;&nbsp; {critical_count} CRITICAL &nbsp; {high_count} HIGH &nbsp; {total_alerts} TOTAL ALERTS</div>', unsafe_allow_html=True)
 
@@ -688,8 +734,8 @@ st.markdown(f"""
   </div>
   <div class="kpi-card kc-rate">
     <div class="kpi-icon">🎯</div>
-    <div class="kpi-val" style="color: {kpi_colors['rate']} !important;">{detection_rate}%</div>
-    <div class="kpi-lbl">Detection Rate</div>
+    <div class="kpi-val" style="color: {kpi_colors['rate']} !important;">{avg_confidence}%</div>
+    <div class="kpi-lbl">Avg Confidence</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -735,8 +781,9 @@ if st.sidebar.button("🗑️ Reset All Alerts", use_container_width=True):
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab_upload, tab2, tab3, tab4, tab5 = st.tabs([
     "🚨 Threat Overview",
+    "📂 Analyse Your PCAP",
     "🗺️ Network Intelligence",
     "🔍 Alert Investigation",
     "🧪 Attack Simulation Lab",
@@ -797,6 +844,66 @@ with tab1:
         ).sort_values("alerts", ascending=False).head(10).reset_index()
         top.columns = ["Source IP", "Alerts", "Critical", "Threat Types"]
         st.dataframe(top, use_container_width=True, hide_index=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAB — Analyse Your PCAP (bring-your-own capture)
+# ──────────────────────────────────────────────────────────────────────────────
+with tab_upload:
+    st.markdown("##### 📂 Live PCAP Dissection — bring your own capture")
+    st.caption(
+        "Upload any Wireshark / tcpdump capture. It is replayed through the same passive pipeline "
+        "(5-tuple flows + 3 s sliding windows + all 6 detectors). Ethernet, Linux-cooked, raw-IP and "
+        f"loopback captures are supported; the first {MAX_UPLOAD_PACKETS:,} packets are analysed."
+    )
+    uploaded = st.file_uploader("PCAP / PCAPNG file", type=["pcap", "pcapng", "cap"], key="pcap_upload")
+    clear_first = st.checkbox("Clear existing alerts first (show only this capture's detections)", value=True)
+
+    if uploaded is not None and st.button("🔬 Analyse Capture", type="primary", key="analyse_upload"):
+        upload_dir = ROOT_DIR / "data" / "pcaps"
+        os.makedirs(upload_dir, exist_ok=True)
+        suffix = os.path.splitext(uploaded.name)[1] or ".pcap"
+        with tempfile.NamedTemporaryFile(suffix=suffix, dir=upload_dir, delete=False) as tmp:
+            tmp.write(uploaded.getbuffer())
+            tmp_path = tmp.name
+        try:
+            if clear_first:
+                reset_database()
+            with st.spinner(f"Dissecting {uploaded.name} through the passive pipeline ..."):
+                result = analyse_pcap(tmp_path, max_packets=MAX_UPLOAD_PACKETS)
+            st.session_state["upload_result"] = {**result, "name": uploaded.name}
+        except Exception as exc:
+            st.session_state.pop("upload_result", None)
+            st.error(f"Could not parse this capture: {exc}")
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        if "upload_result" in st.session_state:
+            st.rerun()
+
+    res = st.session_state.get("upload_result")
+    if res:
+        st.success(f"✔ {res['name']}: {res['packets']:,} packets → {res['flows']:,} flows → {len(res['alerts'])} alerts")
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Packets analysed", f"{res['packets']:,}")
+        m2.metric("Flows", f"{res['flows']:,}")
+        m3.metric("Sliding windows", f"{res['windows']:,}")
+        m4.metric("Throughput", f"{res['pps']:,.0f} pkt/s")
+        m5.metric("Avg inference", f"{res['flow_ms']:.2f} ms/flow")
+        if res["truncated"]:
+            st.warning(f"Capture is larger than {MAX_UPLOAD_PACKETS:,} packets; only the first part was analysed.")
+        if res["packets"] == 0:
+            st.warning(f"No IP packets could be decoded (link type {res['linktype']}, {res['skipped']:,} frames skipped).")
+        elif res["skipped"]:
+            st.caption(f"{res['skipped']:,} non-IP frames (ARP, STP, etc.) were skipped.")
+        if res["alerts"]:
+            summary = pd.DataFrame(res["alerts"]).groupby(["threat_class", "severity"]).size().reset_index(name="alerts")
+            summary["MITRE"] = summary["threat_class"].map(lambda t: MITRE_MAP.get(t, {}).get("id", "-"))
+            st.dataframe(summary, use_container_width=True, hide_index=True)
+            st.caption("All tabs (Overview, Network, Investigation, Analytics) now reflect this capture.")
+        else:
+            st.info("No threats detected in this capture by any of the 6 detectors.")
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 2 — Network Intelligence
@@ -942,19 +1049,43 @@ with tab3:
                 st.markdown('<div class="ev-card">', unsafe_allow_html=True)
                 st.markdown("#### ⚡ AI Detection Evidence")
                 if isinstance(evidence, dict) and evidence:
+                    # Evidence can hold attacker-controlled strings (domains, SNI): always escape
                     for k, v in evidence.items():
-                        label = k.replace("_", " ").title()
-                        if isinstance(v, float):
-                            css_class = "ev-bad" if v > 0.5 else "ev-good"
-                            st.markdown(f'<div class="ev-label">{label}</div><div class="ev-metric {css_class}">{v:.4f}</div>', unsafe_allow_html=True)
-                        elif isinstance(v, bool):
-                            icon = "❌" if v else "✅"
+                        label = escape(k.replace("_", " ").title())
+                        if isinstance(v, bool):
+                            icon = "⚠️" if v else "—"
                             st.markdown(f'<div class="ev-label">{label}</div><div class="ev-metric">{icon} {v}</div>', unsafe_allow_html=True)
                         else:
-                            st.markdown(f'<div class="ev-label">{label}</div><div class="ev-metric">{v}</div>', unsafe_allow_html=True)
+                            st.markdown(f'<div class="ev-label">{label}</div><div class="ev-metric">{escape(format_evidence_value(v))}</div>', unsafe_allow_html=True)
                 else:
                     st.json(evidence)
                 st.markdown('</div>', unsafe_allow_html=True)
+
+            # Automated response playbook for the selected alert
+            st.markdown("##### 🛡️ Automated Response Playbook (SOAR)")
+            st.caption("Rules for the downstream firewall / IPS on the production side. The diode-side sensor never transmits, so nothing is applied automatically.")
+            rules = generate_response_rules(alert_record(row))
+            st.markdown(f"**Recommended action:** {rules['action']}")
+            r1, r2 = st.columns(2)
+            with r1:
+                st.markdown("**iptables**")
+                st.code(rules["iptables"] or "# no host-level rule for this alert", language="bash")
+            with r2:
+                st.markdown("**Snort 3 / Suricata**")
+                st.code(rules["suricata"] or "# no signature for this alert", language="text")
+
+        st.markdown("---")
+        st.markdown("##### 📦 Bulk Export (filtered alerts)")
+        filtered_records = [alert_record(r) for _, r in filtered.iterrows()]
+        bundle = build_rules_bundle(filtered_records)
+        x1, x2, x3 = st.columns(3)
+        x1.download_button("🧱 iptables script (.sh)", bundle["iptables_sh"], "sih26145_block.sh", "text/x-shellscript", use_container_width=True)
+        x2.download_button("📜 Suricata rules (.rules)", bundle["suricata_rules"], "sih26145.rules", "text/plain", use_container_width=True)
+        x3.download_button(
+            "📄 Incident Report (HTML → PDF)",
+            build_incident_report(filtered_records, source_label=f"{len(filtered_records)} filtered alerts"),
+            "sih26145_incident_report.html", "text/html", use_container_width=True,
+        )
 
 # ──────────────────────────────────────────────────────────────────────────────
 # TAB 4 — Attack Simulation Lab
@@ -967,8 +1098,8 @@ with tab4:
         {
             "icon": "🌊", "title": "Volumetric DDoS (SYN Flood)",
             "mitre": "T1498", "severity": "CRITICAL",
-            "desc": "250+ SYN packets flood the target server without completing TCP handshake. AI detects via packets-per-second threshold (>500 PPS) and SYN/ACK ratio asymmetry.",
-            "method": "Rule-based + Random Forest hybrid",
+            "desc": "600 half-open SYNs at ~500 pps from ~200 spoofed bots hit one server. Each 3 s sliding window aggregates fan-in per target: peak PPS, share of half-open SYNs and source-IP entropy.",
+            "method": "Sliding-window fan-in analysis (peak PPS ≥ 300, ≥ 80% half-open SYN)",
             "example": "Mirai Botnet (2016), Memcached Amplification (2018)",
             "key": "ddos",
         },
@@ -983,24 +1114,24 @@ with tab4:
         {
             "icon": "🌐", "title": "DGA Domains & DNS Tunneling",
             "mitre": "T1568", "severity": "HIGH",
-            "desc": "Malware queries algorithmically generated pseudorandom domains (e.g. vxzq981pkm.biz). AI detects via Shannon entropy analysis (>4.0 bits) and consonant ratio.",
-            "method": "Shannon Entropy + Consonant Ratio scoring",
+            "desc": "Malware queries pseudorandom domains (e.g. vxzq981pkm.biz) and tunnels data in long base32 subdomains. Scored on the registered label: Shannon entropy, length, consonant ratio, digit mixing.",
+            "method": "Entropy + consonant/digit indicators; subdomain entropy for tunneling",
             "example": "Conficker, CryptoLocker, Emotet",
             "key": "dga",
         },
         {
             "icon": "🚪", "title": "Reconnaissance Port Scan",
             "mitre": "T1046", "severity": "MEDIUM",
-            "desc": "Systematic probes across 13+ ports (21, 22, 80, 443, 3389, etc.) to map network services. AI detects via destination port fan-out per source IP.",
-            "method": "Fan-out anomaly detection (SYN without ACK completion)",
+            "desc": "Systematic SYN probes across 13 ports (21, 22, 80, 443, 3389, etc.) to map services. Each 3 s window counts distinct ports per host and hosts per port for every source.",
+            "method": "Sliding-window fan-out (≥ 10 ports or ≥ 20 hosts, probe ratio ≥ 60%)",
             "example": "Nmap SYN Scan, Masscan",
             "key": "port_scan",
         },
         {
             "icon": "🔒", "title": "Encrypted Malware (TLS Metadata)",
             "mitre": "T1573", "severity": "CRITICAL",
-            "desc": "Malware establishes encrypted TLS channels with known-bad JA3 fingerprints (Cobalt Strike, Emotet, TrickBot). AI detects WITHOUT payload decryption.",
-            "method": "JA3 hash matching + TLS handshake anomaly scoring",
+            "desc": "An implant opens TLS with a hand-rolled ClientHello. Without decrypting anything, the JA3 hash is checked against known C2 fingerprints, then the ClientHello is scored for legacy version, missing SNI, odd port and cipher list.",
+            "method": "JA3 blocklist + ClientHello metadata anomaly scoring",
             "example": "Cobalt Strike, Emotet, TrickBot, Metasploit",
             "key": "encrypted_malware",
         },
@@ -1110,7 +1241,15 @@ with tab5:
 |---|---|---|
 | **Architecture Enclave** | 100% Passive Read-Only | Physical Data Diode (Tx-disabled, zero return packet) |
 | **Inspection Engine** | Metadata & Statistical Feature Extraction | Zero Payload Decryption (RFC 8446 compliant) |
-| **Detection Suite** | 6 Threat Detectors (Rule + ML Hybrid) | NTRO Problem Statement #26145 Specification |
+| **Detection Suite** | 6 explainable detectors: 4 per-flow + 2 per 3 s sliding window | NTRO Problem Statement #26145 Specification |
 | **Alert Schema** | Standardized JSON with Evidence & Severity | Real-time SQLite DB + JSONL Streaming Log |
+| **Response** | iptables + Snort/Suricata rules exported for the downstream enforcement point | Sensor never transmits (no inline blocking across the diode) |
 | **Taxonomy Alignment** | MITRE ATT&CK® Enterprise + Cyber Kill Chain | Enterprise Threat Intelligence Standards |
 """)
+
+    if not df.empty:
+        st.download_button(
+            "📄 Download Full Incident Report (HTML — open and Print → Save as PDF)",
+            build_incident_report([alert_record(r) for _, r in df.iterrows()], source_label=f"{len(df)} alerts in SOC database"),
+            "sih26145_incident_report.html", "text/html", key="report_full",
+        )

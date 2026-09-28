@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 class StandardAlert:
     @staticmethod
     def create(flow_dict: Dict[str, Any], threat_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Timestamp is the traffic time of the evidence (so replayed PCAPs keep their timeline)."""
         conf = threat_info.get("confidence_score", 0.0)
         if conf >= 0.90:
             severity = "CRITICAL"
@@ -19,10 +20,14 @@ class StandardAlert:
         else:
             severity = "LOW"
 
-        now_utc = datetime.now(timezone.utc).isoformat()
+        event_time = flow_dict.get("last_time")
+        if event_time:
+            ts = datetime.fromtimestamp(float(event_time), timezone.utc).isoformat()
+        else:
+            ts = datetime.now(timezone.utc).isoformat()
 
         return {
-            "timestamp": now_utc,
+            "timestamp": ts,
             "flow_id": flow_dict.get("flow_id", "0.0.0.0:0->0.0.0.0:0_OTHER"),
             "src_ip": flow_dict.get("src_ip", "0.0.0.0"),
             "dst_ip": flow_dict.get("dst_ip", "0.0.0.0"),
@@ -68,12 +73,15 @@ class AlertManager:
             ''')
             conn.commit()
 
-    def publish_alert(self, alert: Dict[str, Any]) -> bool:
-        # Deduplication check
-        dedup_key = f"{alert['src_ip']}->{alert['dst_ip']}_{alert['threat_class']}"
-        now = time.time()
+    def publish_alert(self, alert: Dict[str, Any], dedup_key: Optional[str] = None) -> bool:
+        # Deduplication on traffic time, so a fast PCAP replay behaves like the live stream
+        dedup_key = f"{dedup_key or alert['src_ip'] + '->' + alert['dst_ip']}_{alert['threat_class']}"
+        try:
+            now = datetime.fromisoformat(alert["timestamp"]).timestamp()
+        except (KeyError, ValueError):
+            now = time.time()
         if dedup_key in self.recent_alerts:
-            if (now - self.recent_alerts[dedup_key]) < self.cooldown_sec:
+            if abs(now - self.recent_alerts[dedup_key]) < self.cooldown_sec:
                 return False  # Suppress duplicate alert
 
         self.recent_alerts[dedup_key] = now

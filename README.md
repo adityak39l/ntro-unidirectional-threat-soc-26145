@@ -6,9 +6,11 @@
 
 [![Python](https://img.shields.io/badge/Python-3.12-blue.svg)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-Production--Ready-success.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-15%2F15%20Passed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-39%2F39%20Passed-brightgreen.svg)]()
 [![MITRE ATT&CK](https://img.shields.io/badge/Taxonomy-MITRE%20ATT%26CK%C2%AE-orange.svg)](https://attack.mitre.org/)
 [![Architecture](https://img.shields.io/badge/Compliance-Hardware%20Data%20Diode%20(Zero--Tx)-red.svg)]()
+
+**🔴 Live dashboard:** https://adityak39l-ntro-unidirectional-threat-soc-2-dashboardapp-p1v8yi.streamlit.app/
 
 ---
 
@@ -26,11 +28,11 @@ This system provides a **100% passive, read-only AI streaming threat detection a
 
 | # | Threat Vector | MITRE ATT&CK ID | Detection Algorithm & Proof | Severity |
 |---|---|---|---|---|
-| 1 | **Volumetric & Protocol DDoS** | **T1498** (Network DoS) | PPS threshold (>500) & SYN/ACK asymmetry ratio | **CRITICAL** |
+| 1 | **Volumetric & Protocol DDoS** | **T1498** (Network DoS) | Per-target fan-in in each 3 s sliding window: peak PPS (≥300), share of half-open SYNs, source-IP entropy | **CRITICAL** |
 | 2 | **Botnet C2 Beaconing** | **T1071** (App Layer Protocol) | Inter-Arrival Time (IAT) variance analysis ($\sigma^2 < 0.01$) | **HIGH** |
-| 3 | **DGA Domains & DNS Tunneling** | **T1568** (Dynamic Resolution) | Claude Shannon Information Entropy ($H > 4.0$) + consonant ratio | **HIGH** |
-| 4 | **Encrypted Malware (TLS Metadata)** | **T1573** (Encrypted Channel) | JA3 hash signature matching & TLS Client Hello metadata | **CRITICAL** |
-| 5 | **Reconnaissance Port Scanning** | **T1046** (Network Discovery) | Destination port fan-out anomaly detection | **MEDIUM** |
+| 3 | **DGA Domains & DNS Tunneling** | **T1568** (Dynamic Resolution) | Shannon entropy of the registered label + length, consonant ratio, digit mixing; high-entropy long subdomains for tunneling | **HIGH** |
+| 4 | **Encrypted Malware (TLS Metadata)** | **T1573** (Encrypted Channel) | JA3 blocklist match, then ClientHello anomaly scoring (legacy version, no SNI, odd port, cipher/extension count) | **CRITICAL** |
+| 5 | **Reconnaissance Port Scanning** | **T1046** (Network Discovery) | Per-source fan-out in each 3 s window: distinct ports per host (≥10) or hosts per port (≥20) | **HIGH** |
 | 6 | **Data Exfiltration** | **T1048** (Exfiltration Over Protocol) | Asymmetric outbound byte ratio & MTU-burst volume analysis | **CRITICAL** |
 
 ---
@@ -57,9 +59,9 @@ This system provides a **100% passive, read-only AI streaming threat detection a
 └──────────────────────────┬──────────────────────────────────┘
                            ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. HYBRID AI/ML ENSEMBLE DETECTION CORE                    │
-│    - Deterministic heuristic rule filters                   │
-│    - Machine Learning Classifiers (Random Forest / XGBoost) │
+│ 3. EXPLAINABLE DETECTION CORE                               │
+│    - 4 per-flow detectors (C2, DGA/DNS, TLS, exfiltration)  │
+│    - 2 sliding-window detectors (DDoS fan-in, scan fan-out) │
 │    - Unified Model Registry evaluating all 6 vectors        │
 └──────────────────────────┬──────────────────────────────────┘
                            ▼
@@ -67,6 +69,7 @@ This system provides a **100% passive, read-only AI streaming threat detection a
 │ 4. SOC AUDIT & ALERTING ENGINE                              │
 │    - Standardized JSON Alert Schema + SQLite DB + JSONL log │
 │    - MITRE ATT&CK Mapping & Lockheed Martin Kill Chain      │
+│    - iptables / Suricata response rules + incident report   │
 │    - Enterprise SOC Dashboard (Light & Dark Mode)           │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -81,9 +84,9 @@ $$H(X) = -\sum_{i=1}^{n} P(x_i) \log_2 P(x_i)$$
 - DGA pseudorandom malware domains (`vxzq981pkm.biz`): $H > 4.0$
 
 ### 2. JA3 Cryptographic Fingerprinting (Encrypted Malware)
-Extracts Client Hello parameters:
+Extracts Client Hello parameters (GREASE values removed, per the JA3 spec):
 $$\text{JA3} = \text{MD5}(\text{TLSVersion, Ciphers, Extensions, EllipticCurves, PointFormats})$$
-Matches against known threat actor profiles (Cobalt Strike, Emotet, TrickBot, Metasploit) without decrypting payloads.
+Matches against known threat actor profiles (Cobalt Strike, Emotet, TrickBot, Metasploit) without decrypting payloads. Implants with an unknown JA3 are still scored on ClientHello metadata: legacy TLS version, missing SNI, non-standard port, tiny cipher list, few extensions.
 
 ### 3. IAT Statistical Variance (C2 Beaconing)
 $$\sigma^2 = \frac{1}{N}\sum_{i=1}^{N}(t_i - \bar{t})^2$$
@@ -94,9 +97,10 @@ Automated malware beacons trigger deterministic pulses with variance tending tow
 ## 🖥️ Enterprise SOC Dashboard
 
 The dashboard provides a real-time Security Operations Center interface:
+* **📂 Analyse Your PCAP:** Upload any Wireshark / tcpdump capture (.pcap / .pcapng; Ethernet, Linux-cooked, raw-IP or loopback). It is replayed through the same passive pipeline and every tab updates with its detections.
 * **🚨 Threat Overview:** Dynamic DEFCON-style Threat Posture banner (GREEN/YELLOW/ORANGE/RED with glowing pulse), 6 KPI cards, Plotly threat distribution bar chart, severity donut chart, interactive attack timeline, and top 10 threat sources table.
 * **🗺️ Network Intelligence:** Interactive Network Attack Topology Graph (IP nodes, connection lines, risk colors, size based on alert frequency) and Source IP × Attack Heatmap.
-* **🔍 Alert Investigation:** Dynamic multi-criteria filters (Severity, Threat Class, IP search), clean alert feed, one-click CSV export, and Explainable AI Forensic Inspector displaying cryptographic proofs.
+* **🔍 Alert Investigation:** Dynamic multi-criteria filters (Severity, Threat Class, IP search), clean alert feed, one-click CSV export, Explainable AI Forensic Inspector displaying cryptographic proofs, an **automated response playbook** (iptables + Snort 3/Suricata rules per alert, exported for the downstream enforcement point) and a printable **incident report** (HTML → PDF).
 * **🧪 Attack Simulation Lab:** Interactive launcher cards for all 6 threat vectors with MITRE ATT&CK technique IDs, severity tags, algorithmic descriptions, and real-world threat actor examples.
 * **📊 Analytics & Reports:** Lockheed Martin Cyber Kill Chain coverage pipeline with active detection highlights, MITRE ATT&CK® Enterprise Matrix, Threat Radar chart, and Data Diode compliance verification.
 * **🎨 Dual Display Theme:** High-contrast Dark Mode (Cyber SOC) and High-Contrast Light Mode (Enterprise) with WCAG AAA accessibility standards.
@@ -112,8 +116,8 @@ The dashboard provides a real-time Security Operations Center interface:
 ### 2. Clone and Setup Environment
 ```bash
 # Clone the repository
-git clone https://github.com/<your-username>/ntro-unidirectional-threat-soc.git
-cd ntro-unidirectional-threat-soc
+git clone https://github.com/adityak39l/ntro-unidirectional-threat-soc-26145.git
+cd ntro-unidirectional-threat-soc-26145
 
 # Create virtual environment
 python -m venv venv
@@ -129,15 +133,17 @@ pip install -r requirements.txt
 ```
 
 ### 3. Run Automated Tests
-Verify all 15 unit and integration tests across features, ingestion, models, and pipeline:
+Verify all 39 unit and integration tests across features, ingestion, models, pipeline, response rules and reporting (includes an end-to-end check that each simulated attack is detected as its own class and benign traffic raises no alert):
 ```bash
 pytest tests/ -v
 ```
 
 ### 4. Execute Streaming Pipeline Benchmark
-Run the end-to-end ingestion and detection engine on synthetic unidirectional traffic:
+Generate the synthetic benign + 6-attack capture, then run the end-to-end ingestion and detection engine on it (or pass your own capture path):
 ```bash
+python traffic_simulator/generate_traffic.py
 python run_pipeline.py
+python run_pipeline.py path/to/your_capture.pcap
 ```
 
 ### 5. Launch the SOC Dashboard
@@ -158,13 +164,14 @@ Open **`http://localhost:8501`** in your browser.
 │   └── app.py            # 5-tab dashboard with Plotly & dual themes
 ├── data/                 # Captured PCAPs and alert databases (git-ignored)
 ├── detection/            # Pipeline orchestration
-│   └── pipeline.py       # StreamingDetectionPipeline with sliding windows
+│   └── pipeline.py       # StreamingDetectionPipeline: flows + 3 s sliding windows
 ├── docs/                 # Architectural documentation
 │   └── architecture.md   # Deep-dive system architecture specification
 ├── feature_engine/       # Zero-decryption feature extraction
 │   ├── dns_analyzer.py   # Shannon entropy & DGA domain scoring
 │   ├── feature_extractor.py # Statistical flow metrics & SPLT extractor
-│   └── tls_fingerprint.py# JA3 hash extraction & SPLT vectorization
+│   ├── tls_fingerprint.py# ClientHello parser, JA3 hash & SPLT vectorization
+│   └── window_features.py# Per-window host fan-in / fan-out aggregates
 ├── ingestion/            # Passive read-only data ingestion
 │   ├── flow_aggregator.py# 5-tuple unidirectional flow tracker
 │   ├── pcap_reader.py    # dpkt read-only packet reader
@@ -181,11 +188,14 @@ Open **`http://localhost:8501`** in your browser.
 ├── presentation/         # SIH presentation resources & judge defense guide
 │   ├── judge_qa_guide.md # Anticipated judge questions & technical answers
 │   └── sih_presentation_slides.md # 7-slide deck content
+├── reporting/            # Printable HTML incident report
+├── response/             # iptables & Snort/Suricata rule generation (SOAR)
 ├── tests/                # Automated pytest verification suite
 │   ├── test_features.py  # Entropy, DNS, JA3, SPLT tests
 │   ├── test_ingestion.py # Flow aggregation & sliding window tests
 │   ├── test_models.py    # Detection tests for all 6 models
-│   └── test_pipeline_and_alerts.py # Pipeline integration tests
+│   ├── test_pipeline_and_alerts.py # Pipeline integration + end-to-end attack tests
+│   └── test_response_and_report.py # Rule generation & report escaping tests
 ├── traffic_simulator/    # Synthetic traffic generation
 │   └── generate_traffic.py # Generates benign + 6 attack PCAP profiles
 ├── config.yaml           # Global system configuration
@@ -199,15 +209,16 @@ Open **`http://localhost:8501`** in your browser.
 
 | Metric | Measured Value | Standard Required |
 |---|---|---|
-| **Test Suite Coverage** | **15/15 Passed (100%)** | 100% Pass |
-| **Ingestion Latency** | **< 10ms per window** | Sub-second real-time |
-| **Pipeline Throughput** | **~135 packets/sec** (single core) | Continuous streaming |
+| **Test Suite** | **39/39 Passed** | 100% Pass |
+| **Detection on simulated attacks** | **6/6 vectors, each as its own class; 0 alerts on benign mix** | No cross-class false positives |
+| **Inference latency** | **~0.08 ms per flow, ~0.8 ms per 3 s window** | Sub-second real-time |
+| **End-to-end throughput** | **~7,400 packets/sec** (single Python core; PCAP parsing alone ~67k pkt/s) | Continuous streaming |
 | **Packet Return Policy** | **0 packets transmitted** | Strictly 100% passive |
 | **Payload Decryption** | **0 bytes decrypted** | Metadata & cryptographic analysis |
+
+Throughput and latency were measured on a laptop by replaying the simulated attack mix 60 times (45,420 packets, 25,851 flows). Real-traffic numbers will differ; the synthetic traffic comes from `traffic_simulator/` and is not a substitute for evaluation on labelled public datasets.
 
 ---
 
 ## 📜 Compliance & Ethics
 Built strictly in accordance with **NTRO SIH 2026 Problem Statement #26145** specifications, adhering to Indian Critical Information Infrastructure (CII) protection mandates, NCIIPC guidelines, and RFC 8446 privacy constraints.
-#   n t r o - u n i d i r e c t i o n a l - t h r e a t - s o c - 2 6 1 4 5  
- 

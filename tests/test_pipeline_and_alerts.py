@@ -62,3 +62,47 @@ def test_pipeline_integration(tmp_path):
     alerts = pipeline.flush_and_complete()
     stats = pipeline.get_stats()
     assert stats["total_packets"] == 100
+
+
+ATTACK_EXPECTATIONS = {
+    "ddos": "Volumetric_Protocol_DDoS",
+    "beaconing": "Botnet_C2_Beaconing",
+    "dga": "DGA_Domains_and_DNS_Tunneling",
+    "port_scan": "Reconnaissance_Port_Scanning",
+    "encrypted_malware": "Encrypted_Malware_TLS",
+    "exfiltration": "Data_Exfiltration",
+}
+
+
+def _run_simulated(tmp_path, attack):
+    from traffic_simulator.generate_traffic import generate_synthetic_pcap
+    from ingestion.pcap_reader import ReadOnlyPacketReader
+    pcap = str(tmp_path / f"{attack}.pcap")
+    generate_synthetic_pcap(attack_type=attack, output_path=pcap)
+    pipeline = StreamingDetectionPipeline(alert_jsonl=str(tmp_path / "a.jsonl"), alert_db=str(tmp_path / "a.db"), idle_timeout=2.0)
+    alerts = []
+    for pkt in ReadOnlyPacketReader(pcap).read_packets():
+        alerts.extend(pipeline.process_packet(pkt))
+    alerts.extend(pipeline.flush_and_complete())
+    return alerts
+
+
+@pytest.mark.parametrize("attack", list(ATTACK_EXPECTATIONS))
+def test_each_simulated_attack_detected_as_its_own_class(tmp_path, attack):
+    alerts = _run_simulated(tmp_path, attack)
+    classes = {a["threat_class"] for a in alerts}
+    assert classes == {ATTACK_EXPECTATIONS[attack]}
+    # One incident, not one alert per spoofed packet
+    if attack in ("ddos", "port_scan"):
+        assert len(alerts) == 1
+
+
+def test_benign_traffic_raises_no_alerts(tmp_path):
+    assert _run_simulated(tmp_path, "benign") == []
+
+
+def test_alert_timestamp_is_traffic_time(tmp_path):
+    mgr = AlertManager(jsonl_path=str(tmp_path / "t.jsonl"), db_path=str(tmp_path / "t.db"))
+    flow = {"src_ip": "1.1.1.1", "dst_ip": "2.2.2.2", "last_time": 1577836800.0}  # 2020-01-01 UTC
+    alert = StandardAlert.create(flow, {"threat_class": "Data_Exfiltration", "confidence_score": 0.9})
+    assert alert["timestamp"].startswith("2020-01-01T00:00:00")

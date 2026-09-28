@@ -11,13 +11,13 @@
 
 ### Q2: "If malware authors randomize their TLS cipher suites to evade JA3, how does your system detect encrypted malware?"
 **Winning Answer:**
-"JA3 hash matching is our first-tier signature layer. For zero-day or randomized TLS evasion, we employ our second layer: SPLT (Sequence of Packet Lengths and Times) and inter-arrival time (IAT) variance. Even if an attacker scrambles their cipher order, the fundamental communication semantics of C2 check-ins—small payload handshake, periodic poll, and asymmetric byte ratio—generate distinct behavioral anomalies detected by our machine learning models without needing payload inspection."
+"JA3 hash matching is our first-tier signature layer. For zero-day or randomized TLS evasion, we employ our second layer: SPLT (Sequence of Packet Lengths and Times) and inter-arrival time (IAT) variance. Even if an attacker scrambles their cipher order, the fundamental communication semantics of C2 check-ins—small payload handshake, periodic poll, and asymmetric byte ratio—generate distinct behavioral anomalies (IAT periodicity, asymmetric egress) that our behavioural detectors flag without needing payload inspection. Even with an unknown JA3, the ClientHello itself is scored: legacy TLS version, missing SNI, non-standard port and an unusually small cipher list are each explained in the alert evidence."
 
 ---
 
 ### Q3: "How does your pipeline ensure near real-time bounded latency instead of batch processing?"
 **Winning Answer:**
-"We implement a sliding temporal window manager (3-second window with 1-second slide). Instead of accumulating large PCAPs, packets are immediately ingested into in-memory flow state tables. When an active timeout (120s) or idle timeout (15s) fires, or when the sliding window advances, feature vectors are extracted on-the-fly and evaluated in under 2.5 milliseconds by our lightweight tree models."
+"We implement a sliding temporal window manager (3-second window with 1-second slide). Instead of accumulating large PCAPs, packets are immediately ingested into in-memory flow state tables. When an active timeout (120s) or idle timeout (15s) fires, the flow's feature vector is evaluated by the per-flow detectors (measured ~0.08 ms per flow). Every time the window slides, host-level fan-in (DDoS) and fan-out (port scan) are computed for that window (~0.8 ms per window). End-to-end the pipeline sustains ~7,400 packets/sec on a single Python core."
 
 ---
 
