@@ -203,15 +203,26 @@ else:
         "rate":  "#15803d",
     }
 
-PLOTLY_LAYOUT = dict(
-    template=plotly_template,
-    paper_bgcolor=plotly_paper_bg,
-    plot_bgcolor=plotly_paper_bg,
-    font=dict(family="Inter, sans-serif", color=plotly_font_color, size=12),
-    margin=dict(l=40, r=40, t=50, b=40),
-    xaxis=dict(gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=11)),
-    yaxis=dict(gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=11)),
-)
+def make_layout(**overrides):
+    base = dict(
+        template=plotly_template,
+        paper_bgcolor=plotly_paper_bg,
+        plot_bgcolor=plotly_paper_bg,
+        font=dict(family="Inter, sans-serif", color=plotly_font_color, size=12),
+        margin=dict(l=40, r=40, t=50, b=40),
+        xaxis=dict(gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=11)),
+        yaxis=dict(gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=11)),
+    )
+    for k, v in overrides.items():
+        if isinstance(v, dict) and k in base and isinstance(base[k], dict):
+            merged = dict(base[k])
+            merged.update(v)
+            base[k] = merged
+        else:
+            base[k] = v
+    return base
+
+PLOTLY_LAYOUT = make_layout()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # COMPREHENSIVE HIGH-CONTRAST CSS INJECTION
@@ -629,8 +640,14 @@ st.markdown("""
 
 st.markdown('<div style="text-align:center"><span class="status-pill">● DATA DIODE ENCLAVE &nbsp;—&nbsp; PASSIVE MONITORING &nbsp;|&nbsp; 100% READ-ONLY &nbsp;|&nbsp; ZERO RETURN PATH</span></div>', unsafe_allow_html=True)
 
-# Load data and compute threat posture
+# Load data and compute threat posture (auto-seed baseline threats on first launch)
 df = load_alert_data()
+if df.empty:
+    try:
+        run_simulation("all")
+        df = load_alert_data()
+    except Exception:
+        pass
 _tl_color, _tl_label, _tl_css = threat_level(df)
 total_alerts = len(df)
 critical_count = len(df[df["severity"] == "CRITICAL"]) if not df.empty else 0
@@ -741,8 +758,8 @@ with tab1:
             color_seq = [THREAT_COLORS.get(t, "#3b82f6") for t in tc["Threat"]]
             fig_bar = px.bar(tc, x="Count", y="Threat", orientation="h",
                              color="Threat", color_discrete_sequence=color_seq)
-            fig_bar.update_layout(**PLOTLY_LAYOUT, showlegend=False, height=330,
-                                  yaxis=dict(categoryorder="total ascending", color=plotly_font_color))
+            fig_bar.update_layout(**make_layout(showlegend=False, height=330,
+                                  yaxis=dict(categoryorder="total ascending", color=plotly_font_color)))
             st.plotly_chart(fig_bar, use_container_width=True)
 
         with c2:
@@ -755,7 +772,7 @@ with tab1:
                 hole=0.55, marker=dict(colors=sev_colors),
                 textinfo="label+percent", textfont=dict(size=13, color=plotly_font_color),
             )])
-            fig_donut.update_layout(**PLOTLY_LAYOUT, height=330, showlegend=False)
+            fig_donut.update_layout(**make_layout(height=330, showlegend=False))
             st.plotly_chart(fig_donut, use_container_width=True)
 
         # Alert timeline
@@ -768,7 +785,7 @@ with tab1:
                                 color_discrete_map=SEVERITY_COLORS,
                                 size="confidence_score", hover_data=["src_ip", "dst_ip"],
                                 size_max=14)
-            fig_tl.update_layout(**PLOTLY_LAYOUT, height=290, xaxis_title="Time", yaxis_title="")
+            fig_tl.update_layout(**make_layout(height=290, xaxis_title="Time", yaxis_title=""))
             st.plotly_chart(fig_tl, use_container_width=True)
 
         # Top attackers table
@@ -844,16 +861,16 @@ with tab2:
             hovertext=[f"IP: {ip}<br>Alerts: {alert_counts.get(ip,0)}<br>Risk: {ip_severity.get(ip,'LOW')}" for ip in all_ips],
             hoverinfo="text",
         ))
-        fig_net.update_layout(**PLOTLY_LAYOUT, showlegend=False, height=520,
+        fig_net.update_layout(**make_layout(showlegend=False, height=520,
                               xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
-                              yaxis=dict(showgrid=False, zeroline=False, showticklabels=False))
+                              yaxis=dict(showgrid=False, zeroline=False, showticklabels=False)))
         st.plotly_chart(fig_net, use_container_width=True)
 
         # Heatmap: Source IP x Threat
         st.markdown("##### Threat Heatmap — Source IP × Attack Type")
         hm = df.groupby(["src_ip", "threat_class"]).size().unstack(fill_value=0)
         fig_hm = px.imshow(hm, color_continuous_scale=heatmap_colorscale, aspect="auto")
-        fig_hm.update_layout(**PLOTLY_LAYOUT, height=350)
+        fig_hm.update_layout(**make_layout(height=350))
         st.plotly_chart(fig_hm, use_container_width=True)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1078,12 +1095,12 @@ with tab5:
             line=dict(color="#3b82f6" if is_dark else "#1d4ed8", width=3),
             marker=dict(size=6, color="#3b82f6" if is_dark else "#1d4ed8"),
         ))
-        fig_radar.update_layout(**PLOTLY_LAYOUT, height=430,
+        fig_radar.update_layout(**make_layout(height=430,
                                 polar=dict(
                                     bgcolor=plotly_paper_bg,
                                     radialaxis=dict(visible=True, range=[0, 1], gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=10)),
                                     angularaxis=dict(gridcolor=plotly_grid_color, color=plotly_font_color, tickfont=dict(color=plotly_font_color, size=11, family="Inter")),
-                                ))
+                                )))
         st.plotly_chart(fig_radar, use_container_width=True)
 
     st.markdown("---")
