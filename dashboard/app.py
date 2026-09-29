@@ -44,7 +44,7 @@ TYPICAL_SEVERITY = {
 }
 
 st.set_page_config(
-    page_title="Threat SOC · SIH 26145 · NTRO",
+    page_title="AI Threat Detection · Unidirectional IP Traffic · SIH 26145",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="auto",
@@ -325,27 +325,33 @@ chips_html = (f'<div class="chips">{status_chip}'
               f'<span class="chip">Zero return path</span>'
               f'<span class="chip source" title="{escape(source["label"])}">Data: {escape(source["label"])}</span></div>')
 
-with st.container(key="app-header", horizontal=True, vertical_alignment="center", gap="small"):
-    st.html(
+with st.container(key="app-header"):
+    c_brand, c_ctrl = st.columns([2.7, 1.25], vertical_alignment="center", gap="medium")
+    c_brand.html(
         f'<div class="brand"><div class="brand-mark">{ui.icon("shield")}</div><div class="brand-text">'
-        f'<div class="brand-title">Unidirectional Traffic Threat SOC</div>'
-        f'<div class="brand-sub">NTRO · SIH 2026 · PS 26145 · passive data-diode monitoring</div>{chips_html}</div></div>'
+        f'<div class="brand-eyebrow">NTRO · Smart India Hackathon 2026 · Problem Statement 26145</div>'
+        f'<h1 class="brand-title">AI-Based Detection of Cyber Threats in <span class="hl">Unidirectional IP Traffic</span></h1>'
+        f'<div class="brand-sub">Passive threat-intelligence SOC for data-diode networks · zero return path · '
+        f'zero payload decryption</div>{chips_html}</div></div>'
     )
-    bell = st.popover(
-        str(unread), icon=":material/notifications_active:" if unread else ":material/notifications:",
-        type="primary" if unread else "secondary", help="Notifications", key="bell",
-    )
-    with bell:
-        render_notifications()
-    st.button(
-        "Sound" if ss.sound_on else "Muted", key="sound_btn",
-        icon=":material/volume_up:" if ss.sound_on else ":material/volume_off:",
-        on_click=cb_toggle_sound, help="Alarm sound for CRITICAL attacks",
-    )
-    MODE = st.selectbox(
-        "Theme", ["dark", "light"], key="theme", bind="query-params", label_visibility="collapsed",
-        format_func=lambda m: {"dark": "Dark mode", "light": "Light mode"}[m], width=140,
-    )
+    # Controls stay together on the right however long the heading wraps
+    with c_ctrl, st.container(key="header-controls", horizontal=True, horizontal_alignment="right",
+                              vertical_alignment="center", gap="small"):
+        bell = st.popover(
+            str(unread), icon=":material/notifications_active:" if unread else ":material/notifications:",
+            type="primary" if unread else "secondary", help="Notifications", key="bell",
+        )
+        with bell:
+            render_notifications()
+        st.button(
+            "Sound" if ss.sound_on else "Muted", key="sound_btn",
+            icon=":material/volume_up:" if ss.sound_on else ":material/volume_off:",
+            on_click=cb_toggle_sound, help="Alarm sound for CRITICAL attacks",
+        )
+        MODE = st.selectbox(
+            "Theme", ["dark", "light"], key="theme", bind="query-params", label_visibility="collapsed",
+            format_func=lambda m: {"dark": "Dark mode", "light": "Light mode"}[m], width=140,
+        )
 
 T = theme.tokens(MODE)
 st.html(theme.css(MODE))

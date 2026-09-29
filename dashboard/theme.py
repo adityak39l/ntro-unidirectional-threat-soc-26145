@@ -224,12 +224,16 @@ hr { border-color: var(--border) !important; }
 .st-key-app-header { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   padding: 10px 14px 10px 16px; box-shadow: var(--shadow); }
 .st-key-app-header [data-testid="stSelectbox"] { min-width: 132px; }
-.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
-.brand-mark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center;
+.brand { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
+.brand-mark { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; margin-top: 4px;
   background: var(--accent-soft); color: var(--accent-strong); flex: none; }
-.brand-mark .ico { width: 22px; height: 22px; }
-.brand-title { font-size: 1.08rem; font-weight: 700; color: var(--text-1); line-height: 1.25; letter-spacing: -0.01em; }
-.brand-sub { font-size: 0.78rem; color: var(--text-3); margin-top: 1px; }
+.brand-mark .ico { width: 30px; height: 30px; }
+.brand-eyebrow { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-strong); }
+h1.brand-title { font-size: 1.7rem !important; font-weight: 750 !important; color: var(--text-1) !important; line-height: 1.2;
+  letter-spacing: -0.02em; margin: 4px 0 4px !important; padding: 0 !important; }
+h1.brand-title .hl { color: var(--accent-strong); }
+.brand-sub { font-size: 0.84rem; color: var(--text-3); margin-top: 1px; }
+@media (max-width: 640px) { h1.brand-title { font-size: 1.3rem !important; } .brand-mark { display: none; } }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-start; margin-top: 7px; }
 .brand-text { min-width: 0; }
 .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--surface-2);
