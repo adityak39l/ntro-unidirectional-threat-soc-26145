@@ -83,7 +83,8 @@ def title(alert: Dict[str, Any]) -> str:
     sev = severity(alert.get("severity", "LOW"))
     meta = THREATS.get(alert.get("threat_class", ""))
     name = f"{meta.short} ({meta.mitre_id})" if meta else str(alert.get("threat_class", "Alert"))
-    return f"{sev.glyph} {sev.label} · {name}"
+    source = " · AI model" if _evidence(alert).get("detected_by") == "AI model" else ""
+    return f"{sev.glyph} {sev.label} · {name}{source}"
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,8 @@ class DDoSDetector:
             if syn_only_ratio >= 0.8:
                 confidence += 0.35
                 indicators.append(f"{syn_only_ratio:.0%} half-open SYN packets")
-            elif udp_ratio >= 0.8:
+            # One host streaming UDP at a few hundred pkt/s is a call, a video or a torrent, not a flood
+            elif udp_ratio >= 0.8 and (unique_sources >= 5 or peak_pps >= 3 * self.pps_threshold):
                 confidence += 0.25
                 indicators.append(f"{udp_ratio:.0%} UDP packets")
             if unique_sources >= 50:

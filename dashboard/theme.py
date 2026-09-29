@@ -241,6 +241,10 @@ h1.brand-title .hl { color: var(--accent-strong); }
 .chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .chip.live .dot { background: var(--good); animation: soc-pulse 1.6s ease-in-out infinite; }
 .chip.source { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.chip.ai { background: var(--accent-soft); color: var(--text-1); border-color: var(--accent); }
+.detected-by { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.src-tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 4px; font-size: 0.64rem; font-weight: 700;
+  letter-spacing: 0.04em; color: var(--accent-strong); border: 1px solid var(--accent); vertical-align: middle; }
 @keyframes soc-pulse { 0%, 100% { box-shadow: 0 0 0 0 var(--good-soft); } 50% { box-shadow: 0 0 0 5px var(--good-soft); } }
 
 /* ---------- posture + guide ---------- */

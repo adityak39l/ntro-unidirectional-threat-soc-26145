@@ -1,5 +1,7 @@
 from typing import Dict, Any, Tuple
 
+DISCOVERY_PORTS = {67, 68, 137, 138, 1900, 5353, 5355}
+
 
 class BeaconingDetector:
     NAME = "Botnet_C2_Beaconing"
@@ -10,9 +12,17 @@ class BeaconingDetector:
         pkt_count = features.get("packet_count", 0.0)
         iat_mean = features.get("iat_mean", 0.0)
 
-        # C2 beacons have consistent periodicity (very low variance & low CV)
+        # C2 beacons have consistent periodicity (very low variance & low CV). Portless flows (ICMP)
+        # are excluded: monitoring tools such as ping / mtr send exactly one packet per second
+        # Also excluded: LAN discovery chatter (NetBIOS, SSDP, mDNS, LLMNR, DHCP) and broadcast /
+        # multicast destinations, and flows with no payload, since TCP keep-alives are periodic but carry
+        # no data, whereas a beacon checks in with some
+        ports = {int(features.get("src_port", 0)), int(features.get("dst_port", 0))}
         confidence = 0.0
-        if pkt_count >= 5 and iat_mean > 0.5:
+        if (features.get("is_portless", 0.0) > 0.5 or features.get("dst_broadcast", 0.0) > 0.5
+                or ports & DISCOVERY_PORTS or features.get("payload_to_header_ratio", 1.0) < 0.1):
+            pass
+        elif pkt_count >= 5 and iat_mean > 0.5:
             if iat_var < 0.01:
                 confidence = 0.92
             elif iat_var < 0.05 and iat_cv < 0.15:

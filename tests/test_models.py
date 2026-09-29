@@ -112,8 +112,8 @@ def test_encrypted_malware_clienthello_anomalies():
 def test_exfiltration_detection():
     registry = ThreatModelRegistry()
     exfil_features = {
-        "total_bytes": 50000.0,
-        "bytes_per_second": 60000.0,
+        "total_bytes": 800000.0,
+        "bytes_per_second": 600000.0,
         "payload_to_header_ratio": 35.0,
         "pkt_len_mean": 1400.0
     }

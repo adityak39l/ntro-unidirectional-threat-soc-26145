@@ -42,6 +42,7 @@ class ReadOnlyPacketReader:
         # Byte offset reached in the capture, for progress reporting
         self.file_size = os.path.getsize(filepath)
         self.bytes_read = 0
+        self.cut_short = False
 
     def read_packets(self) -> Generator[Dict[str, Any], None, None]:
         if not DPKT_AVAILABLE:
@@ -59,7 +60,16 @@ class ReadOnlyPacketReader:
             except Exception:
                 self.linktype = LINKTYPE_ETHERNET
 
-            for ts, buf in pcap:
+            frames = iter(pcap)
+            while True:
+                try:
+                    ts, buf = next(frames)
+                except StopIteration:
+                    break
+                except Exception:
+                    # Capture cut mid-record (partial download, crashed tcpdump): keep what was read
+                    self.cut_short = True
+                    break
                 if self.max_packets is not None and self.packets_parsed >= self.max_packets:
                     self.truncated = True
                     break

@@ -139,8 +139,8 @@ def generate_synthetic_pcap(attack_type: str = "all", output_path: str = "data/p
         exfil_start = base_time + 6.0
         exfil_dst = f"198.51.100.{random.randint(1, 50)}"
         exfil_sport = random.randint(40000, 60000)
-        for i in range(35):
-            t = exfil_start + (i * 0.05)
+        for i in range(450):  # ~630 KB burst in under 2 s
+            t = exfil_start + (i * 0.004)
             large_payload = os.urandom(1400)
             exfil_pkt = Ether()/IP(src=f"192.168.1.{rand_id}", dst=exfil_dst)/TCP(sport=exfil_sport, dport=443, flags="PA")/Raw(load=large_payload)
             exfil_pkt.time = t

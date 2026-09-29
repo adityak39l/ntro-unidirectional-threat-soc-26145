@@ -123,7 +123,7 @@ def test_dashboard_renders_in_both_themes_and_notifies(tmp_path, monkeypatch):
     at = AppTest.from_file(APP_PATH, default_timeout=180)
     at.run()
     assert not at.exception
-    assert len(at.tabs) == 6
+    assert len(at.tabs) == 7
     at.selectbox(key="theme").set_value("light").run()
     assert not at.exception
     at.button(key="sb_ddos").click().run()

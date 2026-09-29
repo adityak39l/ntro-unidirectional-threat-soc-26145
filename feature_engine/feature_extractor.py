@@ -2,6 +2,7 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from .dns_analyzer import DNSAnalyzer
 from .tls_fingerprint import TLSFingerprinter
+from .net import is_broadcast_or_multicast, is_internal_ip
 
 DNS_PORTS = {53, 5353}
 
@@ -55,6 +56,11 @@ class FeatureExtractor:
         dns_query_len = float(dns_info.get("query_length", 0)) if dns_info else 0.0
         is_dns_suspect = 1.0 if dns_info and dns_info.get("is_tunnel_suspect") else 0.0
         dns_dga_signals = float(len(dns_info.get("dga_signals", []))) if dns_info else 0.0
+        dns_subdomain_len = float(dns_info.get("subdomain_length", 0)) if dns_info else 0.0
+        dns_subdomain_entropy = float(dns_info.get("subdomain_entropy", 0.0)) if dns_info else 0.0
+        dns_max_label_len = float(dns_info.get("max_label_length", 0)) if dns_info else 0.0
+        dns_hyphens = float(dns_info.get("hyphen_count", 0)) if dns_info else 0.0
+        dns_infra = 1.0 if dns_info and dns_info.get("is_infrastructure") else 0.0
 
         is_tls = 1.0 if tls_info.get("is_tls") else 0.0
         cipher_count = float(tls_info.get("cipher_count", 0))
@@ -85,13 +91,24 @@ class FeatureExtractor:
             "dns_query_len": float(dns_query_len),
             "is_dns_suspect": float(is_dns_suspect),
             "dns_dga_signals": float(dns_dga_signals),
+            "dns_subdomain_len": dns_subdomain_len,
+            "dns_subdomain_entropy": dns_subdomain_entropy,
+            "dns_max_label_len": dns_max_label_len,
+            "dns_hyphens": dns_hyphens,
+            "dns_infra": dns_infra,
             "is_tls": float(is_tls),
             "cipher_count": float(cipher_count),
             "tls_version": float(tls_version),
             "tls_extension_count": float(tls_extension_count),
             "tls_has_sni": float(tls_has_sni),
             "tls_complete": float(tls_complete),
-            "dst_port": float(flow.get("dst_port", 0) or 0)
+            "dst_port": float(flow.get("dst_port", 0) or 0),
+            "src_port": float(flow.get("src_port", 0) or 0),
+            # Direction and transport context (a data diode mirrors traffic from both sides)
+            "src_internal": 1.0 if is_internal_ip(str(flow.get("src_ip", ""))) else 0.0,
+            "dst_internal": 1.0 if is_internal_ip(str(flow.get("dst_ip", ""))) else 0.0,
+            "is_portless": 1.0 if flow.get("protocol") not in ("TCP", "UDP") else 0.0,
+            "dst_broadcast": 1.0 if is_broadcast_or_multicast(str(flow.get("dst_ip", ""))) else 0.0
         }
 
         # SPLT sequence

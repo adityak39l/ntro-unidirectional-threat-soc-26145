@@ -28,6 +28,7 @@ from dashboard import components as ui
 from dashboard import notifications as notif
 from dashboard import theme
 from dashboard import workspace
+from ml.model import CARD_PATH, MODEL_PATH, ThreatMLModel
 from dashboard.catalog import (
     THREATS, THREAT_ORDER, SEVERITIES, SEVERITY_ORDER, KILL_CHAIN_STAGES, MITRE_TACTICS, severity, threat_short,
 )
@@ -113,9 +114,37 @@ def records(frame: pd.DataFrame) -> list:
     return out
 
 
+@st.cache_resource(show_spinner=False)
+def load_ml_model():
+    """Random Forest layer shared by all sessions (None if the artifact is missing or unreadable)."""
+    return ThreatMLModel.load(MODEL_PATH) if MODEL_PATH.exists() else None
+
+
+@st.cache_data(show_spinner=False)
+def load_model_card() -> dict:
+    try:
+        return json.loads(CARD_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+ML_MODEL = load_ml_model()
+REAL_CAPTURE_NAMES = {
+    "ctu_normal12_head.pcap": "CTU-Normal-12 (2013)",
+    "ctu_normal26.pcap": "CTU-Normal-26 (2017)",
+    "ctu_normal28.pcap": "Normal traffic · CTU-Normal-28 (2017)",
+    "ctu_normal24_head.pcap": "Normal traffic · CTU-Normal-24 (2017, Windows host)",
+}
+
+
+def active_ml():
+    return ML_MODEL if ss.get("ml_on", True) else None
+
+
 def analyse_pcap(pcap_path: str, idle_timeout: float = 15.0, max_packets=None, on_progress=None) -> dict:
     """Runs the passive pipeline over a capture and returns ingestion + detection telemetry."""
-    pipe = StreamingDetectionPipeline(alert_jsonl=WS.jsonl, alert_db=WS.db, idle_timeout=idle_timeout)
+    pipe = StreamingDetectionPipeline(alert_jsonl=WS.jsonl, alert_db=WS.db, idle_timeout=idle_timeout,
+                                      ml_model=active_ml())
     reader = ReadOnlyPacketReader(pcap_path, max_packets=max_packets)
     alerts = []
     t0 = time.perf_counter()
@@ -321,7 +350,9 @@ live_on = bool(ss.get("live_mode"))
 status_chip = ('<span class="chip live"><span class="dot"></span>Live monitoring</span>' if live_on
                else '<span class="chip"><span class="dot"></span>Passive monitoring</span>')
 source = ss.data_source
-chips_html = (f'<div class="chips">{status_chip}'
+ai_chip = ('<span class="chip ai">Hybrid: rules + AI model</span>' if active_ml()
+           else '<span class="chip">Rules only</span>')
+chips_html = (f'<div class="chips">{status_chip}{ai_chip}'
               f'<span class="chip">Zero return path</span>'
               f'<span class="chip source" title="{escape(source["label"])}">Data: {escape(source["label"])}</span></div>')
 
@@ -452,8 +483,10 @@ def feed_row_html(rec: dict) -> str:
     port = f":{rec['dst_port']}" if rec.get("dst_port") else ""
     name = meta.short if meta else rec["threat_class"]
     sub = f"{meta.mitre_id} · {meta.tactic}" if meta else ""
+    source_tag = {"AI model": "AI", "Rules + AI model": "RULES+AI"}.get((rec.get("evidence") or {}).get("detected_by"), "")
     return (f'<div class="feed-row"><div class="time">{escape(when)}</div><div>{ui.sev_badge(rec["severity"])}</div>'
-            f'<div class="threat">{escape(name)}<small>{escape(sub)}</small></div>'
+            f'<div class="threat">{escape(name)}'
+            f'{f"<span class=src-tag>{source_tag}</span>" if source_tag else ""}<small>{escape(sub)}</small></div>'
             f'<div class="flow"><span class="mono">{escape(str(rec["src_ip"]))}</span> → '
             f'<span class="mono">{escape(str(rec["dst_ip"]))}{escape(port)}</span>'
             f'<br><span class="muted">{escape(notif.describe(rec))}</span></div>'
@@ -482,12 +515,13 @@ def csv_export(frame: pd.DataFrame) -> bytes:
 # ══════════════════════════════════════════════════════════════════════════════
 # TABS
 # ══════════════════════════════════════════════════════════════════════════════
-tab_overview, tab_upload, tab_network, tab_invest, tab_lab, tab_reports = st.tabs([
+tab_overview, tab_upload, tab_network, tab_invest, tab_lab, tab_ai, tab_reports = st.tabs([
     ":material/dashboard: Overview",
     ":material/upload_file: Analyse PCAP",
     ":material/hub: Network",
     ":material/manage_search: Investigation",
     ":material/science: Simulation lab",
+    ":material/psychology: AI model",
     ":material/description: Reports",
 ])
 
@@ -824,6 +858,109 @@ with tab_lab:
                           width="stretch", on_click=cb_simulate, args=(meta.sim_key,))
 
 # ── Reports ───────────────────────────────────────────────────────────────────
+with tab_ai:
+    card = load_model_card()
+    if not card or ML_MODEL is None:
+        st.html(ui.empty_state("Model artifact not found. Train it with: python train_models.py"))
+    else:
+        st.html(ui.section("Hybrid detection: explainable rules + Random Forest",
+                           "Rules give precise, auditable detections; the model catches variants the fixed thresholds miss. "
+                           "Every alert records which of the two raised it."))
+        st.html(
+            '<div class="guide" style="margin-bottom:12px">'
+            '<div class="guide-step"><div class="guide-num">1</div><div><b>Same features</b><div>The model reads the '
+            'numbers the rules already compute: flow timing, sizes, DNS entropy, ClientHello metadata, per-host fan-in / '
+            'fan-out in each 3 s window. No payload is decrypted.</div></div></div>'
+            '<div class="guide-step"><div class="guide-num">2</div><div><b>Two Random Forests</b><div>A flow model '
+            '(benign, C2, DGA/DNS, encrypted malware, exfiltration) and a host-window model (benign, DDoS target, '
+            'scanner) together cover all six NTRO vectors.</div></div></div>'
+            '<div class="guide-step"><div class="guide-num">3</div><div><b>Calibrated &amp; explained</b><div>Alert '
+            'thresholds are tuned on real benign traffic; each model alert lists the features that pushed its '
+            'probability up. A model-only alert is capped below Critical.</div></div></div></div>'
+        )
+        fm, hm = card.get("flow_model", {}), card.get("host_model", {})
+        thr = card.get("thresholds", {})
+        st.html(ui.kpi_tiles([
+            {"label": "Model", "value": "Random Forest",
+             "sub": f"{ML_MODEL.flow_model.n_estimators} + {ML_MODEL.host_model.n_estimators} trees (flow + host)", "icon": "hub"},
+            {"label": "Training rows", "value": f"{fm.get('train_rows', 0) + hm.get('train_rows', 0):,}",
+             "sub": f"{fm.get('train_rows', 0):,} flows · {hm.get('train_rows', 0):,} host-windows", "icon": "category"},
+            {"label": "Alert threshold", "value": f"{thr.get('flow', 0):.2f} / {thr.get('host', 0):.2f}",
+             "sub": "flow / host probability", "icon": "target"},
+            {"label": "AI layer", "value": "On" if active_ml() else "Off", "sub": "toggle in the sidebar", "icon": "shield",
+             "accent": "var(--good)" if active_ml() else "var(--low)"},
+        ]))
+
+        syn = card.get("synthetic_holdout", {})
+        if syn:
+            size = syn.get("test_size", {})
+            st.html(ui.section("Accuracy on held-out synthetic traffic",
+                               f"Independent draw never seen in training: {size.get('flows', 0):,} flows and "
+                               f"{size.get('host_windows', 0):,} host-windows. Recall = share of attacks caught; "
+                               "precision = share of alerts that were real."))
+            rows = []
+            for cls in THREAT_ORDER:
+                r_, m_, h_ = (syn[k]["per_class"].get(cls, {}) for k in ("rules", "ml", "hybrid"))
+                rows.append([THREATS[cls].short, THREATS[cls].mitre_id, f"{r_.get('recall', 0):.1%}",
+                             f"{m_.get('recall', 0):.1%}", f"{h_.get('recall', 0):.1%}", f"{h_.get('precision', 0):.1%}",
+                             f"{h_.get('support', 0):,}"])
+            rows.append(["Benign flows wrongly flagged", "—",
+                         f"{syn['rules']['benign_flow_false_positive_rate']:.2%}",
+                         f"{syn['ml']['benign_flow_false_positive_rate']:.2%}",
+                         f"{syn['hybrid']['benign_flow_false_positive_rate']:.2%}", "—", f"{size.get('benign_flows', 0):,}"])
+            st.html(ui.table(["Vector", "MITRE", "Rules recall", "AI recall", "Hybrid recall", "Hybrid precision", "Test cases"],
+                             rows, num_cols=(2, 3, 4, 5, 6), mono_cols=(1,)))
+
+        real = card.get("real_captures", {})
+        if real:
+            calib = real.get("benign_calibration", {})
+            st.html(ui.section(
+                "Validation on real traffic (Stratosphere Lab, CTU Prague)",
+                f"Alert thresholds were tuned on {', '.join(REAL_CAPTURE_NAMES.get(c, c) for c in calib.get('captures', [])) or '—'}. "
+                "The normal-traffic rows below are other hosts and days, never used for tuning; on benign traffic every alert "
+                "is a false alarm."))
+            rrows = []
+
+            def real_row(name, ro, hy, focus="—"):
+                classes = ", ".join(f"{threat_short(c)} {n}" for c, n in sorted(hy["by_class"].items(), key=lambda kv: -kv[1])) or "none"
+                rrows.append([name, f"{hy['packets']:,}", f"{hy['flows']:,}", f"{ro['alerts']:,}", f"{hy['alerts']:,}",
+                              focus, classes])
+
+            for test in real.get("benign_tests", []):
+                real_row(REAL_CAPTURE_NAMES.get(test["capture"], test["capture"]), test["rules_only"], test["hybrid"])
+            ro, hy = real.get("botnet_rules_only"), real.get("botnet_hybrid")
+            if ro and hy:
+                involve = next((v for k, v in hy.items() if k.startswith("alerts_involving_")), None)
+                real_row("Neris botnet (CTU-13 scenario 1)", ro, hy, f"{involve:,}" if involve is not None else "—")
+            st.html(ui.table(["Capture", "Packets", "Flows", "Alerts: rules only", "Alerts: hybrid",
+                              "Involving infected host", "Hybrid alerts by vector"], rrows, num_cols=(1, 2, 3, 4)))
+
+        c1, c2 = st.columns(2, gap="large")
+        for col, part, title in ((c1, fm, "Flow model — most important features"),
+                                 (c2, hm, "Host-window model — most important features")):
+            feats = part.get("top_features", [])[:8][::-1]
+            if not feats:
+                continue
+            with col:
+                st.html(ui.section(title, "Mean decrease in impurity across the forest"))
+                fig = go.Figure(go.Bar(x=[v for _, v in feats], y=[n for n, _ in feats], orientation="h",
+                                       marker=dict(color=T["accent"], cornerradius=4),
+                                       text=[f"{v:.2f}" for _, v in feats], textposition="outside", cliponaxis=False,
+                                       textfont=dict(color=T["text-2"], size=11),
+                                       hovertemplate="<b>%{y}</b><br>importance %{x:.3f}<extra></extra>"))
+                fig.update_layout(**theme.plotly_layout(MODE, height=300, bargap=0.35,
+                                                        xaxis=dict(showgrid=True, tickformat=".2f"),
+                                                        yaxis=dict(showgrid=False, tickfont=dict(color=T["text-2"], size=11))))
+                plot(fig, f"ai_importance_{title[:4]}")
+
+        st.html(ui.section("Limitations", "Stated plainly so the numbers are read correctly"))
+        st.html("<ul style='margin:0 0 0 18px;padding:0'>" + "".join(
+            f"<li style='color:var(--text-2);font-size:.86rem;margin:3px 0'>{escape(item)}</li>"
+            for item in card.get("limitations", []) + [
+                "Synthetic accuracy shows the model generalises across attack variants; it is not a field-accuracy claim.",
+                f"Model trained {card.get('trained_at', '?')} with scikit-learn {card.get('sklearn_version', '?')}; "
+                "reproduce with python train_models.py."]) + "</ul>")
+
 with tab_reports:
     detected = set(fdf["threat_class"]) if not fdf.empty else set()
     st.html(ui.section("Cyber kill chain coverage", "Lockheed Martin kill-chain stages with at least one detection in view"))
@@ -918,6 +1055,12 @@ with st.sidebar:
         st.button(f"{meta.short} · {meta.mitre_id}", icon=meta.icon, width="stretch", key=f"sb_{meta.sim_key}",
                   on_click=cb_simulate, args=(meta.sim_key,), help=meta.label)
 
+    st.subheader("Detection engine")
+    st.toggle("AI model layer (Random Forest)", key="ml_on", value=True, disabled=ML_MODEL is None,
+              help="On: rules + Random Forest (hybrid). Off: rules only. Applies to the next analysis or simulation.")
+    st.caption("Hybrid mode: every alert shows whether the rules, the model or both flagged it."
+               if ML_MODEL else "Model artifact not found — running rules only.")
+
     st.subheader("Live monitoring")
     st.toggle("Stream live traffic", key="live_mode",
               help=f"Every ~{LIVE_INTERVAL_S} s a new batch of benign or attack traffic flows through the pipeline, "
@@ -949,8 +1092,10 @@ EVIDENCE_LABELS = {
     "total_bytes": ("Bytes sent", None), "bytes_per_sec": ("Egress rate", None), "payload_ratio": ("Payload : header", "{:.1f}"),
     "avg_packet_size": ("Avg packet size", "{:,.0f} B"), "probe_ratio": ("Probe share", "{:.0%}"),
     "window_start": ("Window start", None), "window_end": ("Window end", None),
+    "model_probability": ("Model probability", "{:.0%}"), "detected_by": ("Detected by", None),
 }
 LIST_KEYS = ("indicators", "anomalies", "dga_indicators")
+HIDDEN_KEYS = LIST_KEYS + ("model_factors", "model_probability", "detected_by")
 MONO_KEYS = ("ja3_hash", "ja3_string", "queried_domain", "target", "top_sources", "sample_ports", "sni")
 
 
@@ -1005,14 +1150,26 @@ def alert_dialog(alert_id: int):
         ]))
     with c2:
         st.html(ui.section("Why it was flagged"))
+        detected_by = ev.get("detected_by")
+        if detected_by:
+            prob = ev.get("model_probability")
+            st.html(f'<div class="detected-by">{ui.tag("Detected by: " + detected_by, "mitre")}'
+                    + (f'<span class="muted" style="font-size:.8rem">model probability {float(prob):.0%}</span>'
+                       if prob is not None else "") + "</div>")
         reasons = [str(r) for k in LIST_KEYS for r in (ev.get(k) or [])]
         if reasons:
             st.html("<ul style='margin:0 0 8px 18px;padding:0'>" + "".join(
                 f"<li style='color:var(--text-1);font-size:.86rem;margin:2px 0'>{escape(r)}</li>" for r in reasons) + "</ul>")
         items = [{"key": EVIDENCE_LABELS.get(k, (k.replace("_", " ").capitalize(), None))[0],
                   "value": format_evidence(k, v), "mono": k in MONO_KEYS}
-                 for k, v in ev.items() if k not in LIST_KEYS]
+                 for k, v in ev.items() if k not in HIDDEN_KEYS]
         st.html(ui.evidence_grid(items))
+        factors = ev.get("model_factors") or []
+        if factors:
+            st.html(ui.section("AI model — strongest factors", "Path contributions from the Random Forest for this alert")
+                    + "<ul style='margin:0 0 4px 18px;padding:0'>" + "".join(
+                        f"<li style='color:var(--text-1);font-size:.84rem;margin:2px 0'>{escape(str(f))}</li>" for f in factors)
+                    + "</ul>")
 
     rules = generate_response_rules(rec)
     st.html(ui.section("Automated response playbook",

@@ -1,0 +1,411 @@
+{
+  "model": "Random Forest (scikit-learn), 2 classifiers",
+  "trained_at": "2026-09-29T04:32:39+00:00",
+  "sklearn_version": "1.9.1",
+  "estimators_per_forest": 120,
+  "flow_model": {
+    "classes": [
+      "Botnet_C2_Beaconing",
+      "DGA_Domains_and_DNS_Tunneling",
+      "Data_Exfiltration",
+      "Encrypted_Malware_TLS",
+      "benign"
+    ],
+    "features": [
+      "log_packets",
+      "log_bytes",
+      "log_duration",
+      "log_pps",
+      "log_bps",
+      "pkt_len_mean",
+      "pkt_len_std",
+      "pkt_len_min",
+      "pkt_len_max",
+      "iat_mean",
+      "iat_cv",
+      "iat_std",
+      "syn_share",
+      "ack_share",
+      "log_payload_ratio",
+      "is_dns",
+      "dns_label_entropy",
+      "dns_query_len",
+      "dns_dga_signals",
+      "dns_subdomain_len",
+      "dns_subdomain_entropy",
+      "dns_max_label_len",
+      "dns_hyphens",
+      "dns_infra",
+      "is_tls",
+      "tls_complete",
+      "tls_legacy",
+      "tls_cipher_count",
+      "tls_extension_count",
+      "tls_has_sni",
+      "dst_port_common",
+      "src_port_ephemeral",
+      "is_portless",
+      "src_internal",
+      "dst_internal"
+    ],
+    "train_rows": 27392,
+    "train_class_counts": {
+      "benign": 23695,
+      "DGA_Domains_and_DNS_Tunneling": 1390,
+      "Botnet_C2_Beaconing": 700,
+      "Data_Exfiltration": 889,
+      "Encrypted_Malware_TLS": 718
+    },
+    "top_features": [
+      [
+        "smallest packet",
+        0.0917
+      ],
+      [
+        "packet rate",
+        0.0707
+      ],
+      [
+        "mean inter-arrival time",
+        0.0606
+      ],
+      [
+        "packet-size spread",
+        0.0581
+      ],
+      [
+        "largest packet",
+        0.058
+      ],
+      [
+        "payload-to-header ratio",
+        0.0556
+      ],
+      [
+        "byte rate",
+        0.0537
+      ],
+      [
+        "longest domain label",
+        0.0489
+      ],
+      [
+        "TLS extensions",
+        0.0461
+      ],
+      [
+        "ClientHello fully parsed",
+        0.0419
+      ]
+    ]
+  },
+  "host_model": {
+    "classes": [
+      "Reconnaissance_Port_Scanning",
+      "Volumetric_Protocol_DDoS",
+      "benign"
+    ],
+    "features": [
+      "in_log_packets",
+      "in_log_peak_pps",
+      "in_syn_only_ratio",
+      "in_udp_ratio",
+      "in_log_sources",
+      "in_source_entropy",
+      "out_log_packets",
+      "out_probe_ratio",
+      "out_log_ports_one_host",
+      "out_log_hosts_one_port",
+      "out_log_targets"
+    ],
+    "train_rows": 41571,
+    "train_class_counts": {
+      "benign": 40535,
+      "Reconnaissance_Port_Scanning": 453,
+      "Volumetric_Protocol_DDoS": 583
+    },
+    "top_features": [
+      [
+        "probe share (outbound)",
+        0.2495
+      ],
+      [
+        "peak inbound packet rate",
+        0.2477
+      ],
+      [
+        "packets received in window",
+        0.1663
+      ],
+      [
+        "half-open SYN share (inbound)",
+        0.0895
+      ],
+      [
+        "distinct sources",
+        0.0771
+      ],
+      [
+        "ports probed on one host",
+        0.0505
+      ],
+      [
+        "hosts probed on one port",
+        0.0465
+      ],
+      [
+        "source-IP entropy",
+        0.0347
+      ]
+    ]
+  },
+  "thresholds": {
+    "flow": 0.85,
+    "host": 0.85
+  },
+  "synthetic_holdout": {
+    "rules": {
+      "per_class": {
+        "Botnet_C2_Beaconing": {
+          "precision": 0.9939,
+          "recall": 0.6284,
+          "f1": 0.77,
+          "support": 261
+        },
+        "DGA_Domains_and_DNS_Tunneling": {
+          "precision": 0.9831,
+          "recall": 0.7973,
+          "f1": 0.8805,
+          "support": 439
+        },
+        "Encrypted_Malware_TLS": {
+          "precision": 1.0,
+          "recall": 0.6711,
+          "f1": 0.8032,
+          "support": 225
+        },
+        "Data_Exfiltration": {
+          "precision": 1.0,
+          "recall": 0.53,
+          "f1": 0.6928,
+          "support": 283
+        },
+        "Volumetric_Protocol_DDoS": {
+          "precision": 0.8247,
+          "recall": 0.5128,
+          "f1": 0.6324,
+          "support": 156
+        },
+        "Reconnaissance_Port_Scanning": {
+          "precision": 0.8994,
+          "recall": 0.8895,
+          "f1": 0.8944,
+          "support": 181
+        }
+      },
+      "benign_flow_false_positive_rate": 0.00092,
+      "benign_host_window_false_positive_rate": 0.00251
+    },
+    "ml": {
+      "per_class": {
+        "Botnet_C2_Beaconing": {
+          "precision": 1.0,
+          "recall": 0.9808,
+          "f1": 0.9903,
+          "support": 261
+        },
+        "DGA_Domains_and_DNS_Tunneling": {
+          "precision": 0.9953,
+          "recall": 0.9658,
+          "f1": 0.9803,
+          "support": 439
+        },
+        "Encrypted_Malware_TLS": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 225
+        },
+        "Data_Exfiltration": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 283
+        },
+        "Volumetric_Protocol_DDoS": {
+          "precision": 0.9423,
+          "recall": 0.6282,
+          "f1": 0.7538,
+          "support": 156
+        },
+        "Reconnaissance_Port_Scanning": {
+          "precision": 0.8934,
+          "recall": 0.9724,
+          "f1": 0.9312,
+          "support": 181
+        }
+      },
+      "benign_flow_false_positive_rate": 0.00026,
+      "benign_host_window_false_positive_rate": 0.00194
+    },
+    "hybrid": {
+      "per_class": {
+        "Botnet_C2_Beaconing": {
+          "precision": 0.9962,
+          "recall": 0.9923,
+          "f1": 0.9942,
+          "support": 261
+        },
+        "DGA_Domains_and_DNS_Tunneling": {
+          "precision": 0.9815,
+          "recall": 0.9658,
+          "f1": 0.9736,
+          "support": 439
+        },
+        "Encrypted_Malware_TLS": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 225
+        },
+        "Data_Exfiltration": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 283
+        },
+        "Volumetric_Protocol_DDoS": {
+          "precision": 0.8433,
+          "recall": 0.7244,
+          "f1": 0.7793,
+          "support": 156
+        },
+        "Reconnaissance_Port_Scanning": {
+          "precision": 0.8873,
+          "recall": 1.0,
+          "f1": 0.9403,
+          "support": 181
+        }
+      },
+      "benign_flow_false_positive_rate": 0.00119,
+      "benign_host_window_false_positive_rate": 0.00316
+    },
+    "test_size": {
+      "flows": 8789,
+      "benign_flows": 7581,
+      "host_windows": 14278,
+      "benign_host_windows": 13941
+    }
+  },
+  "real_captures": {
+    "benign_calibration": {
+      "captures": [
+        "ctu_normal12_head.pcap",
+        "ctu_normal26.pcap"
+      ],
+      "flows": 34043,
+      "candidate_host_windows": 3320
+    },
+    "benign_tests": [
+      {
+        "capture": "ctu_normal28.pcap",
+        "rules_only": {
+          "capture": "ctu_normal28.pcap, rules only",
+          "packets": 266405,
+          "flows": 25559,
+          "alerts": 0,
+          "alerts_per_10k_flows": 0.0,
+          "by_class": {},
+          "by_detection_source": {},
+          "seconds": 9.0
+        },
+        "hybrid": {
+          "capture": "ctu_normal28.pcap, rules + model",
+          "packets": 266405,
+          "flows": 25559,
+          "alerts": 3,
+          "alerts_per_10k_flows": 1.17,
+          "by_class": {
+            "DGA_Domains_and_DNS_Tunneling": 3
+          },
+          "by_detection_source": {
+            "AI model": 3
+          },
+          "seconds": 30.3
+        }
+      },
+      {
+        "capture": "ctu_normal24_head.pcap",
+        "rules_only": {
+          "capture": "ctu_normal24_head.pcap, rules only",
+          "packets": 261441,
+          "flows": 15608,
+          "alerts": 0,
+          "alerts_per_10k_flows": 0.0,
+          "by_class": {},
+          "by_detection_source": {},
+          "seconds": 6.4
+        },
+        "hybrid": {
+          "capture": "ctu_normal24_head.pcap, rules + model",
+          "packets": 261441,
+          "flows": 15608,
+          "alerts": 2,
+          "alerts_per_10k_flows": 1.28,
+          "by_class": {
+            "DGA_Domains_and_DNS_Tunneling": 2
+          },
+          "by_detection_source": {
+            "AI model": 2
+          },
+          "seconds": 18.2
+        }
+      }
+    ],
+    "botnet_rules_only": {
+      "capture": "botnet, rules only",
+      "packets": 322248,
+      "flows": 33053,
+      "alerts": 336,
+      "alerts_per_10k_flows": 101.65,
+      "by_class": {
+        "DGA_Domains_and_DNS_Tunneling": 307,
+        "Encrypted_Malware_TLS": 29
+      },
+      "by_detection_source": {
+        "Rules": 336
+      },
+      "seconds": 16.9,
+      "alerts_involving_147.32.84.165": 336
+    },
+    "botnet_hybrid": {
+      "capture": "botnet, rules + model",
+      "packets": 322248,
+      "flows": 33053,
+      "alerts": 347,
+      "alerts_per_10k_flows": 104.98,
+      "by_class": {
+        "Reconnaissance_Port_Scanning": 11,
+        "DGA_Domains_and_DNS_Tunneling": 307,
+        "Encrypted_Malware_TLS": 29
+      },
+      "by_detection_source": {
+        "AI model": 11,
+        "Rules": 336
+      },
+      "seconds": 50.5,
+      "alerts_involving_147.32.84.165": 347
+    }
+  },
+  "data": {
+    "training": "synthetic labelled traffic (ml/synthetic.py, seed 11) run through the production flow and sliding-window code; attack parameters span wider ranges than the rule thresholds",
+    "holdout": "independent synthetic draw (seed 99)",
+    "real": "CTU-13 captures from the Stratosphere Lab (CTU Prague), if supplied"
+  },
+  "limitations": [
+    "Trained on synthetic traffic; real-world accuracy needs evaluation on labelled operational data.",
+    "Beacons slower than the 15 s flow idle timeout are split into single-packet flows and not scored.",
+    "Large legitimate uploads resemble exfiltration without destination reputation data."
+  ],
+  "build_seconds": 254.5
+}

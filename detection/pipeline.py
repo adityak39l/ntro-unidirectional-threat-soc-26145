@@ -6,6 +6,8 @@ from feature_engine.feature_extractor import FeatureExtractor
 from models.model_registry import ThreatModelRegistry
 from alerts.alert_manager import AlertManager, StandardAlert
 
+FLOW_BATCH = 512
+
 
 class StreamingDetectionPipeline:
     def __init__(
@@ -14,12 +16,16 @@ class StreamingDetectionPipeline:
         slide_interval: float = 1.0,
         idle_timeout: float = 15.0,
         alert_jsonl: str = "data/alerts.jsonl",
-        alert_db: str = "data/alerts.db"
+        alert_db: str = "data/alerts.db",
+        ml_model="default",
     ):
+        if ml_model == "default":
+            from ml.model import default_model
+            ml_model = default_model()
         self.flow_aggregator = FlowAggregator(idle_timeout=idle_timeout)
         self.window_manager = SlidingWindowManager(window_size=window_size, slide_interval=slide_interval)
         self.feature_extractor = FeatureExtractor()
-        self.model_registry = ThreatModelRegistry()
+        self.model_registry = ThreatModelRegistry(ml_model=ml_model)
         self.alert_manager = AlertManager(jsonl_path=alert_jsonl, db_path=alert_db)
 
         # Telemetry
@@ -37,7 +43,7 @@ class StreamingDetectionPipeline:
 
         expired_flow = self.flow_aggregator.process_packet(pkt)
         if expired_flow:
-            alerts.extend(self._evaluate_and_alert(expired_flow))
+            alerts.extend(self._evaluate_flows([expired_flow]))
 
         for window_packets in self.window_manager.add_item(pkt):
             start, end = self.window_manager.last_window_bounds
@@ -45,9 +51,7 @@ class StreamingDetectionPipeline:
 
         # Check periodic idle flush (every 500 packets)
         if self.total_packets_processed % 500 == 0:
-            flushed = self.flow_aggregator.flush_expired(pkt["timestamp"])
-            for f in flushed:
-                alerts.extend(self._evaluate_and_alert(f))
+            alerts.extend(self._evaluate_flows(self.flow_aggregator.flush_expired(pkt["timestamp"])))
 
         return alerts
 
@@ -58,8 +62,7 @@ class StreamingDetectionPipeline:
             start, end = self.window_manager.last_window_bounds
             alerts.extend(self._evaluate_window(remaining_packets, start, end))
 
-        for f in self.flow_aggregator.flush_all():
-            alerts.extend(self._evaluate_and_alert(f))
+        alerts.extend(self._evaluate_flows(self.flow_aggregator.flush_all()))
         return alerts
 
     def _publish(self, flow: Dict[str, Any], detection: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -70,16 +73,21 @@ class StreamingDetectionPipeline:
         return []
 
     def _evaluate_and_alert(self, flow: Dict[str, Any]) -> List[Dict[str, Any]]:
-        self.total_flows_processed += 1
-        t0 = time.perf_counter()
-        features = self.feature_extractor.extract_flow_features(flow)
-        context = self.feature_extractor.extract_context(flow)
-        detections = self.model_registry.evaluate_flow(flow, features, context)
-        self.flow_inference_seconds += time.perf_counter() - t0
+        return self._evaluate_flows([flow])
 
+    def _evaluate_flows(self, flows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         generated_alerts = []
-        for d in detections:
-            generated_alerts.extend(self._publish(flow, d))
+        for start in range(0, len(flows), FLOW_BATCH):
+            batch = flows[start:start + FLOW_BATCH]
+            self.total_flows_processed += len(batch)
+            t0 = time.perf_counter()
+            items = [(f, self.feature_extractor.extract_flow_features(f), self.feature_extractor.extract_context(f))
+                     for f in batch]
+            detections = self.model_registry.evaluate_flows(items)
+            self.flow_inference_seconds += time.perf_counter() - t0
+            for flow, flow_detections in zip(batch, detections):
+                for d in flow_detections:
+                    generated_alerts.extend(self._publish(flow, d))
         return generated_alerts
 
     def _evaluate_window(self, packets: List[Dict[str, Any]], start: float, end: float) -> List[Dict[str, Any]]:
@@ -104,4 +112,5 @@ class StreamingDetectionPipeline:
             "flows_per_sec": round(self.total_flows_processed / elapsed, 2),
             "avg_flow_inference_ms": round(1000 * self.flow_inference_seconds / max(1, self.total_flows_processed), 3),
             "avg_window_inference_ms": round(1000 * self.window_inference_seconds / max(1, self.total_windows_evaluated), 3),
+            "ml_enabled": self.model_registry.ml is not None,
         }
