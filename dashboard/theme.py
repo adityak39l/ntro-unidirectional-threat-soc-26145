@@ -224,8 +224,8 @@ hr { border-color: var(--border) !important; }
 .st-key-app-header { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
   padding: 10px 14px 10px 16px; box-shadow: var(--shadow); }
 .st-key-app-header [data-testid="stSelectbox"] { min-width: 132px; }
-.brand { display: flex; align-items: flex-start; gap: 14px; min-width: 0; }
-.brand-mark { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; margin-top: 4px;
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand-mark { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center;
   background: var(--accent-soft); color: var(--accent-strong); flex: none; }
 .brand-mark .ico { width: 30px; height: 30px; }
 .brand-eyebrow { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: var(--accent-strong); }
